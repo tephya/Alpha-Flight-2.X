@@ -1,0 +1,21 @@
+# Keil User/Build files
+*.o
+*.d
+*.crf
+*.lnp
+*.axf
+*.htm
+*.build_log.htm
+*.dep
+*.map
+*.uvoptx
+*.uvguix.*
+
+# Folders
+Objects/
+Listings/
+DebugConfig/
+RTE/
+
+# Archives
+*.zip
