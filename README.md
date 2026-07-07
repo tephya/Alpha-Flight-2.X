@@ -44,11 +44,13 @@ This project is a complete 10-inch quadcopter development solution, featuring cu
 
 ## 硬件与文档架构 / Hardware & Documentation
 
-本项目所有的硬件 PCB 均经过实物打板验证（包含主控板、GPS 子板及磁力计子板），并完成了完整的动力系统空桨台架测试。
+本项目所有硬件均经过 PCB 打板验证，文档已整理如下：
 
-* **PCB 设计 (Hardware Design)**: 包含原理图、BOM 物料清单、电源拓扑分析。详细单板高清大图请查阅 `Document/实物展示/`。
-* **控制理论 (Control Theory)**: 包含 PID 动态反向计算的理论推导与实践代码。
-* **生产文件 (Manufacturing)**: 包含飞控主板、外设子板的完整 Gerber 生产工程文件。
+* **Schematic & PCB**: 飞控主板、GPS 与磁力计子板的原理图（详见 `Document/Schematic/`）。
+* **BOM & DataSheet**: 硬件选型清单与核心芯片手册（详见 `Document/BOM/` 及 `Document/DataSheet/`）。
+* **PCB Design Details**: 电源拓扑分析及 PCB 设计说明（详见 `Document/说明文档/`）。
+* **Firmware Implementation**: 基于 STM32F405 的外设驱动、姿态解算及 PID 控制逻辑。
+
 
 ## 待优化项 / Future Work
 
