@@ -56,7 +56,7 @@ void Protection_Update(BB_Frame_t *f){
 	
 	f->current = current;
 	
-	error = current - 44.0;
+	error = current - 44.0f;
 	if(error > 0)
 		throttle_limit -= Kp * error;
 	else
