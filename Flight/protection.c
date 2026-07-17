@@ -51,8 +51,8 @@ void Protection_Update(BB_Frame_t *f){
 	while(ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) != SET)	continue;
 	uint16_t raw = ADC_GetConversionValue(ADC1);
 	
-	measurement = raw * (3.3 / 4095.0f);
-	current = measurement * 1.0 / 0.01175f;		/* 11.75mV / A */
+	measurement = raw * 0.0008058608058f;		/* 3.3/4095.0f */
+	current = measurement * 85.1063829787f;		/* 11.75mV / A & 1.0/0.01175f */
 	
 	f->current = current;
 	
