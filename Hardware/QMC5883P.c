@@ -22,39 +22,6 @@ void QMC_Init(){
 	IIC_WriteReg(QMC_ADDR, 0x0A, 0xC7);	// OSR2: 8; OSR1: 8; ODR: 50Hz; Continuous Mode
 }
 
-
-/**
-  * @brief  QMC5883L 硬件偏置自测函数（阈值采集专用）
-  * @note   [TODO/标定中] 当前仅用于采集 Set/Reset 脉冲前后的原始数据对，暂不参与起飞逻辑拦截。
-  * 后续工程任务：需离线分析黑匣子记录的 (rmx1-rmx2) Delta 差值分布，
-  * 找出合理的方差/极值边界后，再将此函数重构为返回布尔值的真实自检拦截器。
-  * @param  f 指向黑匣子数据帧的指针，用于将两组原始磁场数据压入日志
-  * @retval None
-  */
-void QMC_SelfTest(BB_Frame_t *f){
-	uint8_t res;
-	QMC_Data_t test = {0};
-	int16_t rmx2 = 0, rmy2 = 0, rmz2 = 0;
-	Delay_ms(1);				// POR Complication Time --max 250us
-	
-	IIC_WriteReg(QMC_ADDR, 0x29, 0x06);
-	IIC_WriteReg(QMC_ADDR, 0x0A, 0x03);
-	
-	while(1){
-		IIC_ReadReg(QMC_ADDR, 0x09, &res);
-		if((res & 0x01) == QMC_Ready) break; 
-	}
-	
-	QMC_ReadRaw_3Axis(&test);
-	f->rmx1 = test.rmx; f->rmy1 = test.rmy; f->rmz1 = test.rmz;
-
-	IIC_WriteReg(QMC_ADDR, 0x0B, 0x40);
-	Delay_ms(5);
-	
-	QMC_ReadRaw_3Axis(&test);
-	f->rmx2 = test.rmx; f->rmy2 = test.rmy; f->rmz2 = test.rmz;
-	/* 做差 delta， 看看delta是否合理 */
-}
 /**
   * @brief  Burst读QMC3轴磁力计原始数据
   * @param	MX: X轴

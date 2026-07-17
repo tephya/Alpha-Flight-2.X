@@ -3,7 +3,6 @@
 
 
 Attitude_t att1 = {0};
-Attitude_t att2 = {0};
 
 static const float DEG_TO_RAD = 0.01745329252f;
 
@@ -14,10 +13,10 @@ static const float DEG_TO_RAD = 0.01745329252f;
   * @retval None
   */
 void ICM_GetRollPitch(IMU_Data_t *imu_data, Attitude_t *att){
-    // 欧拉角旋转顺序：先Roll后Pitch，Pitch分母需补偿Roll的影响
-    att->accel_roll = atan2f(imu_data->ay, imu_data->az);
 	float az = imu_data->az;
 	float ay = imu_data->ay;
+    // 欧拉角旋转顺序：先Roll后Pitch，Pitch分母需补偿Roll的影响
+    att->accel_roll = atan2f(imu_data->ay, imu_data->az);
     att->accel_pitch = atan2f(-1* imu_data->ax, sqrtf(az * az + ay * ay));
 }
 

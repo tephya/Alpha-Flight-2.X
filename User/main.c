@@ -55,10 +55,11 @@ int main(void){
     uint32_t last_EFC = 0;        /* Last End Flight Confirm */
     uint32_t last_qmc = 0;
 	uint32_t last_gps = 0;
+	uint32_t last_time_32 = 0;	// 保存上一次记录的时间
 	
     uint32_t last_dshot = 0;
     
-    BB_Frame_t f = {0};
+    BB_Frame_t record = {0};
 /*===================== Local variable declarations End ==============================*/
 
 /*========================= Initialization Start ==============================*/    
@@ -266,7 +267,7 @@ int main(void){
                 break;
             }
             
-            Protection_Update(&f);
+            Protection_Update();
             Protection_SetMode();
             Buzzer_Drive();
         }
@@ -275,45 +276,29 @@ int main(void){
 		 * 后续改进方向： 采用环形缓冲区 / 双缓冲 + DMA */
         if(SysTick_ms - last_slow >= 500){
             last_slow = SysTick_ms;
+			uint32_t delta_time = SysTick_ms - last_time_32;
+			last_time_32 = SysTick_ms;
+			
+			record.time_ms = (uint16_t)delta_time;
             
             /* 临界区保护：防止写盘拼装时被高频控制快照打断导致数据撕裂 */
             __disable_irq();
-            f.ax = imu1_data.ax; f.ay = imu1_data.ay; f.az = imu1_data.az;
-            f.gx = imu1_data.gx; f.gy = imu1_data.gy; f.gz = imu1_data.gz;
-            f.mx = qmc_data.MX;  f.my = qmc_data.MY;  f.mz = qmc_data.MZ;
-            f.roll = fc.roll_meas;
-            f.pitch = fc.pitch_meas;
-            f.yaw = fc.yaw_meas;
-            f.m1 = motor_thr_data.m1;
-            f.m2 = motor_thr_data.m2;
-            f.m3 = motor_thr_data.m3;
-            f.m4 = motor_thr_data.m4;
-            f.pro = fc.roll_cmd;
-            f.ppo = fc.pitch_cmd;
-            f.pyo = fc.yaw_cmd;
-            f.target_roll = fc.roll_target;
-            f.target_pitch = fc.pitch_target;
-            f.target_yaw = fc.yaw_rate_target;
-            f.roll_rate_target  = fc.roll_rate_target;
-            f.pitch_rate_target = fc.pitch_rate_target;
-            f.throttle = fc.throttle;
-            f.ch0 = crsf_data.channels[0];
-            f.ch1 = crsf_data.channels[1];
-            f.ch2 = crsf_data.channels[2];
-            f.ch3 = crsf_data.channels[3];
-            f.ch4 = crsf_data.channels[4];
-            f.vbat = vbat;
-            f.throttle_limit = throttle_limit;
-            f.failsafe_active = failsafe_active;
-            f.rth_state = rth_state;
-            f.latitude = gps_data.latitude;
-            f.longitude = gps_data.longitude;
-            f.satellites = gps_data.satellites;
-            f.time_ms = last_slow;
+            record.angle_cdeg[0] = (int16_t)(att1.roll * 10000.0f);
+			record.angle_cdeg[1] = (int16_t)(att1.pitch * 10000.0f);
+			record.angle_cdeg[2] = (int16_t)(att1.yaw * 5000.0f);
+			
+			record.target_cdeg[0] = (int8_t)fc.roll_target;
+			record.target_cdeg[1] = (int8_t)fc.pitch_target;
+			record.target_cdeg[2] = (int8_t)fc.yaw_target;
+			
+			record.motor[0] = motor_thr_data.m1;
+			record.motor[1] = motor_thr_data.m2;
+			record.motor[2] = motor_thr_data.m3;
+			record.motor[3] = motor_thr_data.m4;		
             __enable_irq(); 
                     
             /* 允许在此执行慢速阻塞写盘，高频控制链路已通过软件中断实现越顶 */
-            BB_Log(&f);
+            BB_Log(&record);
         }
         
         /* 落地停机判定：拨下 Arm 且零油门保持 6 秒则切断动力 */

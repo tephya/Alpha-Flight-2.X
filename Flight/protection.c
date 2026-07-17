@@ -14,7 +14,6 @@
 
 float throttle_limit = 0;
 static uint32_t tilt_start_time = 0;
-uint8_t failsafe_active = FS_STANDBY;
 BuzzerMode_t buzzer_mode = BUZZ_NORMAL;
 
 /**
@@ -42,7 +41,7 @@ void Protection_Init(){
   * @brief  根据测量的ESC电流值动态更新油门上限， 并记录电流值在黑盒实体指针中
   * @param	*f		黑盒实体指针
   */
-void Protection_Update(BB_Frame_t *f){
+void Protection_Update(){
 	float measurement, current, error;
 	
 	ADC_RegularChannelConfig(ADC1, ADC_Channel_11, 1, ADC_SampleTime_15Cycles);
@@ -53,8 +52,6 @@ void Protection_Update(BB_Frame_t *f){
 	
 	measurement = raw * 0.0008058608058f;		/* 3.3/4095.0f */
 	current = measurement * 85.1063829787f;		/* 11.75mV / A & 1.0/0.01175f */
-	
-	f->current = current;
 	
 	error = current - 44.0f;
 	if(error > 0)

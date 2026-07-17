@@ -16,11 +16,10 @@ typedef enum {
 } BuzzerMode_t;
 
 extern BuzzerMode_t buzzer_mode;
-extern uint8_t failsafe_active;
 extern float throttle_limit;
 
 void Protection_Init(void);
-void Protection_Update(BB_Frame_t *f);
+void Protection_Update();
 void Protection_SetMode(void);
 uint8_t Tilt_Check(float roll_deg, float pitch_deg);
 

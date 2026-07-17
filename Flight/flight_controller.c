@@ -230,6 +230,7 @@ void FlightController_UpdateYaw(float yaw_deg)
 
 /**
   * @brief 	匹配 Roll 遥控杆的通道值 到期望角度
+  * @note	匹配范围： -20° ~ 20°
   * @param	Roll ELRS 通道值
   * @retval 映射后的目标横滚角速度，单位: °/s
   */
@@ -239,6 +240,7 @@ float Map_Roll(uint16_t ch){
 
 /**
   * @brief 	匹配 Pitch 遥控杆的通道值 到期望角度
+  * @note	匹配范围： -20° ~ 20°
   * @param	Pitch ELRS 通道值
   * @retval 映射后的目标俯仰角速度，单位: °/s
   */
@@ -248,6 +250,7 @@ float Map_Pitch(uint16_t ch){
 
 /**
   * @brief  匹配 Yaw 遥控杆的通道值 到期望角速度 (Rate)
+  * @note	匹配范围： -90° ~ 90°
   * @param  ch  ELRS 通道值
   * @retval 映射后的目标偏航角速度，单位: °/s
   */
@@ -257,6 +260,7 @@ float Map_Yaw(uint16_t ch){
 
 /**
   * @brief 	匹配 油门 遥控杆的通道值 到设定油门范围内的值
+  * @note	匹配范围： 0 ~ 1152(max:2048)
   * @param	油门 ELRS 通道值
   * @retval 映射后的目标油门值
   */

@@ -10,7 +10,7 @@ typedef struct {
 	float accel_roll, accel_pitch;		/* 加速度计算的角度 （中间量） */
 } Attitude_t;
 
-extern Attitude_t att1, att2;
+extern Attitude_t att1;
 
 
 void ICM_GetRollPitch(IMU_Data_t *imu_data, Attitude_t *att);

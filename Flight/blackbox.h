@@ -2,37 +2,42 @@
 #define __BLACKBOX_H
 
 #include "stm32f4xx.h"
+#include "ff.h"
 
-typedef struct{
-    uint32_t time_ms;
-    float gx, gy, gz;
-    float ax, ay, az;
-    float mx, my, mz;
-    float roll, pitch, yaw;
-    uint16_t m1, m2, m3, m4;
-    // PID
-    float pro, ppo, pyo;
-    float target_roll, target_pitch, target_yaw;
+#define LOG_BUFF_SIZE	512
+#define FRAME_SIZE		19U
+
+/*
+ * 定义块内紧凑黑盒记录结构体，单次记录 19 Bytes
+ * 作者用的 SD 卡为 Block(512Bytes) 写入，因此记录 27 帧后就写入一次 SD 卡
+ * 当前结构体下，最后一帧会少记录一个 Byte，留存为下一个 Block 的头
+ */
+typedef __packed struct {
+	// 状态量
+    uint16_t time_ms;
 	
-	float roll_rate_target;
-	float pitch_rate_target;
-    // 遥控器
-    uint16_t throttle;
-    uint16_t ch0, ch1, ch2, ch3, ch4;
-    // 系统状态
-    float vbat, current;
-    float throttle_limit;
-    uint8_t failsafe_active;
-    uint8_t rth_state;
-    // GPS
-    double latitude, longitude;
-    uint8_t satellites;
-    // QMC self test（首帧）
-    int16_t rmx1, rmy1, rmz1, rmx2, rmy2, rmz2;
+	// 测量值
+	/*
+	 * roll、pitch 范围 -π ~ π rad，保留4位小数记录
+	 * Yaw 范围 -2π ~ 2π rad， 缩放5000
+	 */
+	int16_t angle_cdeg[3];
+
+	// 输出值
+    uint16_t motor[4];	
+	
+	// 目标值
+	/*
+	 * target roll、pitch 范围 -20° ~ 20°
+	 * target yaw 范围 -90° ~ 90°
+	 */
+    int8_t target_cdeg[3];
 } BB_Frame_t;
 
-int8_t BB_Init(void);               // 初始化：挂载SDka，创建日志文件
-int8_t BB_Log(BB_Frame_t *f);        // 写入一帧
-int8_t BB_Close(void);              // 关闭文件
+
+
+int8_t BB_Init(void);               		// 初始化：挂载SDka，创建日志文件
+FRESULT BB_Log(const BB_Frame_t *f);        	// 写入一帧
+int8_t BB_Close(void);              		// 关闭文件
 
 #endif
