@@ -187,13 +187,13 @@ static int split_fields(char *line, char **fields, int max_fields)
   * @param  direction 半球方向 ('N', 'S', 'E', 'W')
   * @retval 转换后的十进制坐标 (南半球和西半球为负值)
   */
-static double nmea_to_decimal(const char *field, char direction)
+static float nmea_to_decimal(const char *field, char direction)
 {
-    double raw = atof(field);           /* 将字符串转为double */
+    float raw = strtof(field, NULL);           /* 将字符串转为float */
     
-    int    deg = (int)(raw / 100);      /* 3211.71113 -> 32deg 0.1171113min */
-    double min = raw - deg * 100;
-    double result = deg + min / 60.0;
+    int    deg = (int)(raw / 100.0f);      /* 3211.71113 -> 32deg 0.1171113min */
+    float min = raw - deg * 100.0f;
+    float result = deg + min / 60.0f;
     
     if(direction == 'S' || direction == 'W') result = -result;      /* N & S > 0, S & W < 0 */
     return result;

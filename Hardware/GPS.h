@@ -9,8 +9,8 @@ typedef struct {
 	uint8_t satellites;		// 可用卫星数
 	
 	// 位置
-	double latitude;		// 十进制度，北正南负，纬度
-	double longitude;		// 十进制度，东正西负，经度
+	float latitude;		// 十进制度，北正南负，纬度
+	float longitude;		// 十进制度，东正西负，经度
 	float  altitude;		// 海拔，米（GGA）
 	float  hdop;			// 水平精度因子（GGA）
 	
@@ -28,9 +28,9 @@ typedef struct {
 } GPS_Data_t;
 
 typedef struct {
-	double latitude;		// home 点的纬度
-	double longitude;		// home 点的经度
-	float  altitude;		// home 点的 海拔高度
+	float latitude;		// home 点的纬度
+	float longitude;		// home 点的经度
+	float altitude;		// home 点的 海拔高度
 	uint8_t	valid;			// home 点是否已记录; 1=已记录， 0=未记录
 } GPS_Home_t;
 
@@ -43,7 +43,7 @@ void GPS_Init(void);
 /* 取一条完整 NMEA 帧到 buf；返回长度（含 \r\n + '\0'），0 表示暂无完整帧 */
 int  GPS_GetLine(char *buf, int max_len);
 static int split_fields(char *line, char **fields, int max_fields);
-static double nmea_to_decimal(const char *field, char direction);
+static float nmea_to_decimal(const char *field, char direction);
 static void parse_time(const char *field);
 static void parse_date(const char *field);
 static void parse_gga(char **f, int n);

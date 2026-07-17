@@ -5,6 +5,8 @@
 Attitude_t att1 = {0};
 Attitude_t att2 = {0};
 
+static const float DEG_TO_RAD = 0.01745329252f;
+
 /**
   * @brief  由加速度计原始数据计算Roll和Pitch角
   * @param  imu_data   IMU 数据结构体，存有 RAW 数据
@@ -31,8 +33,8 @@ void Attitude_Update(IMU_Data_t *imu_data, Attitude_t *att, float dt)
 {
     float GyroX, GyroY;
     // 将陀螺仪单位转为 rad/s
-    GyroX = imu_data->gx * M_PI / 180.0f;
-    GyroY = imu_data->gy * M_PI / 180.0f;
+    GyroX = imu_data->gx * DEG_TO_RAD;
+    GyroY = imu_data->gy * DEG_TO_RAD;
 
     att->roll  = GYRO_TRUST * (att->roll  + GyroX * dt) + (1.0f - GYRO_TRUST) * att->accel_roll;
     att->pitch = GYRO_TRUST * (att->pitch + GyroY * dt) + (1.0f - GYRO_TRUST) * att->accel_pitch;
