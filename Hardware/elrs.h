@@ -14,7 +14,7 @@ typedef struct{
 
 extern CRSF_Data_t crsf_data, temp_data;
 
-void ELRS_INIT(void);
+void ELRS_Init(void);
 void ELRS_Poll(void);
 void ELRS_StateMachine(uint8_t byte);
 uint8_t CRSF_CRC8(void);

@@ -24,7 +24,7 @@ void ICM_TIM7_Trigger_Init(void);
 void ICM_SPI1_DMA_Init(void);
 void ICM_Start_DMA_Transfer(void);
 void DMA2_Stream0_IRQHandler(void);
-uint8_t ICM_Init(uint8_t who1, uint8_t who2);
+uint8_t ICM_Init();
 
 void ICM_SPI_RWByte(SPI_TypeDef * SPIx, uint8_t *RXData, uint8_t TXData);
 uint8_t ICM_ReadReg(SPI_TypeDef * SPIx, uint8_t reg);

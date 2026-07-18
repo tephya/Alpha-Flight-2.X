@@ -17,47 +17,47 @@ uint8_t spi1_dma_rx_buf[13] = {0};
   * @retval None
   */
 void ICM_SPI_Init(void){
-	// 使能SPI1 GPIO引脚时钟 AHB1
-	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
-	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
-	// SPI1引脚复用功能重映射
-	GPIO_PinAFConfig(GPIOA, GPIO_PinSource5, GPIO_AF_SPI1);
-	GPIO_PinAFConfig(GPIOA, GPIO_PinSource6, GPIO_AF_SPI1);
-	GPIO_PinAFConfig(GPIOA, GPIO_PinSource7, GPIO_AF_SPI1);
-	
-	GPIO_InitTypeDef GPIO_InitStructure;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
-    GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
-    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_5|GPIO_Pin_6|GPIO_Pin_7;
-    GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
-    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-	GPIO_Init(GPIOA, &GPIO_InitStructure);
-	
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN;
-	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_4;		// PA4: ICM_INT1，ICM输出中断采集信号给IMU
-	GPIO_Init(GPIOA, &GPIO_InitStructure);
-	
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;	// PC4: SPI1_CSB
-	GPIO_Init(GPIOC, &GPIO_InitStructure);
-	
-	
-	// 使能SPI1时钟 APB2 84MHz
-	RCC_APB2PeriphClockCmd(RCC_APB2Periph_SPI1, ENABLE);
-	SPI_InitTypeDef SPI_InitStructure;
-	SPI_InitStructure.SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_16;
-	SPI_InitStructure.SPI_CPHA = SPI_CPHA_2Edge;		// 第二个边沿采样（Mode3）
-	SPI_InitStructure.SPI_CPOL = SPI_CPOL_High;			// 空闲时Clock为高（Mode3）
-	SPI_InitStructure.SPI_CRCPolynomial = 7;
-	SPI_InitStructure.SPI_DataSize = SPI_DataSize_8b;
-	SPI_InitStructure.SPI_Direction = SPI_Direction_2Lines_FullDuplex;
-	SPI_InitStructure.SPI_FirstBit = SPI_FirstBit_MSB;	// MSB先发
-	SPI_InitStructure.SPI_Mode = SPI_Mode_Master;
-	SPI_InitStructure.SPI_NSS = SPI_NSS_Soft;			// CS由软件控制
-	SPI_Init(SPI1, &SPI_InitStructure);
-	
-	SPI_Cmd(SPI1, ENABLE);
-	
-	GPIO_SetBits(GPIOC, GPIO_Pin_4);
+    // 使能SPI1 GPIO引脚时钟 AHB1
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+    // SPI1引脚复用功能重映射
+    GPIO_PinAFConfig(GPIOA, GPIO_PinSource5, GPIO_AF_SPI1);
+    GPIO_PinAFConfig(GPIOA, GPIO_PinSource6, GPIO_AF_SPI1);
+    GPIO_PinAFConfig(GPIOA, GPIO_PinSource7, GPIO_AF_SPI1);
+    
+    GPIO_InitTypeDef GPIO_InitStructure;
+      GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
+      GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
+      GPIO_InitStructure.GPIO_Pin = GPIO_Pin_5|GPIO_Pin_6|GPIO_Pin_7;
+      GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
+      GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(GPIOA, &GPIO_InitStructure);
+    
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN;
+    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_4;		// PA4: ICM_INT1，ICM输出中断采集信号给IMU
+    GPIO_Init(GPIOA, &GPIO_InitStructure);
+    
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;	// PC4: SPI1_CSB
+    GPIO_Init(GPIOC, &GPIO_InitStructure);
+    
+    
+    // 使能SPI1时钟 APB2 84MHz
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_SPI1, ENABLE);
+    SPI_InitTypeDef SPI_InitStructure;
+    SPI_InitStructure.SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_16;
+    SPI_InitStructure.SPI_CPHA = SPI_CPHA_2Edge;		// 第二个边沿采样（Mode3）
+    SPI_InitStructure.SPI_CPOL = SPI_CPOL_High;			// 空闲时Clock为高（Mode3）
+    SPI_InitStructure.SPI_CRCPolynomial = 7;
+    SPI_InitStructure.SPI_DataSize = SPI_DataSize_8b;
+    SPI_InitStructure.SPI_Direction = SPI_Direction_2Lines_FullDuplex;
+    SPI_InitStructure.SPI_FirstBit = SPI_FirstBit_MSB;	// MSB先发
+    SPI_InitStructure.SPI_Mode = SPI_Mode_Master;
+    SPI_InitStructure.SPI_NSS = SPI_NSS_Soft;			// CS由软件控制
+    SPI_Init(SPI1, &SPI_InitStructure);
+    
+    SPI_Cmd(SPI1, ENABLE);
+    
+    GPIO_SetBits(GPIOC, GPIO_Pin_4);
 }
 
 /**
@@ -210,30 +210,32 @@ void DMA2_Stream0_IRQHandler(void)
   * @retval None
   */
 void ICM_SPI_RWByte(SPI_TypeDef * SPIx, uint8_t *RXData, uint8_t TXData){
-	while(SPI_I2S_GetFlagStatus(SPIx, SPI_I2S_FLAG_TXE) != SET) continue;
-	SPI_I2S_SendData(SPIx, TXData);
-	while(SPI_I2S_GetFlagStatus(SPIx, SPI_I2S_FLAG_RXNE) != SET) continue;
-	*RXData = SPI_I2S_ReceiveData(SPIx);
+    while(SPI_I2S_GetFlagStatus(SPIx, SPI_I2S_FLAG_TXE) != SET) continue;
+    SPI_I2S_SendData(SPIx, TXData);
+    while(SPI_I2S_GetFlagStatus(SPIx, SPI_I2S_FLAG_RXNE) != SET) continue;
+    *RXData = SPI_I2S_ReceiveData(SPIx);
 }
+
 /**
   * @brief  读ICM寄存器
   * @param  reg 寄存器地址
   * @retval 寄存器值
   */
 uint8_t ICM_ReadReg(SPI_TypeDef * SPIx, uint8_t reg){
-	uint8_t dummy = 0, Data = 0;
-	
-	if(SPIx == SPI1) GPIO_ResetBits(GPIOC, GPIO_Pin_4);
-	else			 GPIO_ResetBits(GPIOB, GPIO_Pin_3);
-	
-	ICM_SPI_RWByte(SPIx, &dummy, reg|0x80);	// bit7=1：读操作
-	ICM_SPI_RWByte(SPIx, &Data, 0x00);		// 发0x00占位符，收数据
-	
-	if(SPIx == SPI1) GPIO_SetBits(GPIOC, GPIO_Pin_4);
-	else			 GPIO_SetBits(GPIOB, GPIO_Pin_3);	
-	
-	return Data;
+    uint8_t dummy = 0, Data = 0;
+    
+    if(SPIx == SPI1) GPIO_ResetBits(GPIOC, GPIO_Pin_4);
+    else			 GPIO_ResetBits(GPIOB, GPIO_Pin_3);
+    
+    ICM_SPI_RWByte(SPIx, &dummy, reg|0x80);	// bit7=1：读操作
+    ICM_SPI_RWByte(SPIx, &Data, 0x00);		// 发0x00占位符，收数据
+    
+    if(SPIx == SPI1) GPIO_SetBits(GPIOC, GPIO_Pin_4);
+    else			 GPIO_SetBits(GPIOB, GPIO_Pin_3);	
+    
+    return Data;
 }
+
 /**
   * @brief  向ICM写寄存器
   * @param  reg 寄存器地址
@@ -241,51 +243,53 @@ uint8_t ICM_ReadReg(SPI_TypeDef * SPIx, uint8_t reg){
   * @retval None
   */
 void ICM_WriteReg(SPI_TypeDef * SPIx, uint8_t reg, uint8_t Data){
-	uint8_t dummy = 0;
-	
-	if(SPIx == SPI1) GPIO_ResetBits(GPIOC, GPIO_Pin_4);
-	else			 GPIO_ResetBits(GPIOB, GPIO_Pin_3);	
-	
-	ICM_SPI_RWByte(SPIx, &dummy, reg&0x7F);	// bit7=0：写操作
-	ICM_SPI_RWByte(SPIx, &dummy, Data);
-	
-	if(SPIx == SPI1) GPIO_SetBits(GPIOC, GPIO_Pin_4);
-	else			 GPIO_SetBits(GPIOB, GPIO_Pin_3);	
+    uint8_t dummy = 0;
+    
+    if(SPIx == SPI1) GPIO_ResetBits(GPIOC, GPIO_Pin_4);
+    else			 GPIO_ResetBits(GPIOB, GPIO_Pin_3);	
+    
+    ICM_SPI_RWByte(SPIx, &dummy, reg&0x7F);	// bit7=0：写操作
+    ICM_SPI_RWByte(SPIx, &dummy, Data);
+    
+    if(SPIx == SPI1) GPIO_SetBits(GPIOC, GPIO_Pin_4);
+    else			 GPIO_SetBits(GPIOB, GPIO_Pin_3);	
 }
+
 /**
   * @brief  配置ICM基本寄存器
   * @param  None
-  * @retval 初始化状态
-  *		@arg 0: 初始化正常
-  *		@arg 1: WHO_AM_I校验失败，SPI通信异常
+  * @retval 0: 初始化正常
+  *	        1: WHO_AM_I校验失败，SPI通信异常
   */
-uint8_t ICM_Init(uint8_t who1, uint8_t who2){
-	ICM_WriteReg(SPI1, 0x4A, 0xA5);		// 软件复位
-	Delay_ms(20);
-	
-    who1 = ICM_ReadReg(SPI1, 0x01);
-	Delay_us(100);
+uint8_t ICM_Init(){
+    uint8_t who1;
+
+    ICM_WriteReg(SPI1, 0x4A, 0xA5); // 软件复位
+    Delay_ms(20);
     
-    if(who1 != 0x6A){
-		return 1;
-	}
-	
-	ICM_WriteReg(SPI1, 0x7D, 0x0E);		// PWR_CTRL: 使能ACC、Gyro、温度传感器
-	Delay_ms(20);
-	
-	ICM_WriteReg(SPI1, 0x41, 0x03);		// ACC_RANGE: +/-16G
-	Delay_ms(5);	
-	
-	ICM_WriteReg(SPI1, 0x40, 0x8C);		// ACC_CONF: 高性能模式，OSR4，1600Hz
-	Delay_ms(5);
-	
-	ICM_WriteReg(SPI1, 0x43, 0x00);		// GYR_RANGE: +/-2000dps
-	Delay_ms(5);	
+    who1 = ICM_ReadReg(SPI1, 0x01);
+    Delay_us(100);
+      
+      if(who1 != 0x6A){
+      return 1;
+    }
+    
+    ICM_WriteReg(SPI1, 0x7D, 0x0E);		// PWR_CTRL: 使能ACC、Gyro、温度传感器
+    Delay_ms(20);
+    
+    ICM_WriteReg(SPI1, 0x41, 0x03);		// ACC_RANGE: +/-16G
+    Delay_ms(5);	
+    
+    ICM_WriteReg(SPI1, 0x40, 0x8C);		// ACC_CONF: 高性能模式，OSR4，1600Hz
+    Delay_ms(5);
+    
+    ICM_WriteReg(SPI1, 0x43, 0x00);		// GYR_RANGE: +/-2000dps
+    Delay_ms(5);	
 
-	ICM_WriteReg(SPI1, 0x42, 0xCD);		// GYR_CONF: 高性能模式，OSR4，3200Hz
-	Delay_ms(10);
+    ICM_WriteReg(SPI1, 0x42, 0xCD);		// GYR_CONF: 高性能模式，OSR4，3200Hz
+    Delay_ms(10);
 
-	return 0;
+    return 0;
 }
 
 /**
@@ -295,20 +299,21 @@ uint8_t ICM_Init(uint8_t who1, uint8_t who2){
   * @param  AZ Z轴加速度（单位：g）
   * @retval None
   */
-void ICM_ReadACCData(SPI_TypeDef * SPIx, IMU_Data_t *imu_data){
-	int16_t rawX, rawY, rawZ;
-	rawX = (int16_t)(ICM_ReadReg(SPIx, 0x0C) << 8 | ICM_ReadReg(SPIx, 0x0D));
-	rawY = (int16_t)(ICM_ReadReg(SPIx, 0x0E) << 8 | ICM_ReadReg(SPIx, 0x0F));
-	rawZ = (int16_t)(ICM_ReadReg(SPIx, 0x10) << 8 | ICM_ReadReg(SPIx, 0x11));
-	
-	imu_data->ax = rawX * LSB_ACC;
-	imu_data->ay = rawY * LSB_ACC;
-	imu_data->az = rawZ * LSB_ACC;
-	
-	/* AX AY重映射 */
-	float tmp;
-	
-	tmp = imu_data->ax;
-	imu_data->ax = imu_data->ay;
-	imu_data->ay = tmp;
+void ICM_ReadACCData(SPI_TypeDef * SPIx, IMU_Data_t *imu_data)
+{
+    int16_t rawX, rawY, rawZ;
+    rawX = (int16_t)(ICM_ReadReg(SPIx, 0x0C) << 8 | ICM_ReadReg(SPIx, 0x0D));
+    rawY = (int16_t)(ICM_ReadReg(SPIx, 0x0E) << 8 | ICM_ReadReg(SPIx, 0x0F));
+    rawZ = (int16_t)(ICM_ReadReg(SPIx, 0x10) << 8 | ICM_ReadReg(SPIx, 0x11));
+
+    imu_data->ax = rawX * LSB_ACC;
+    imu_data->ay = rawY * LSB_ACC;
+    imu_data->az = rawZ * LSB_ACC;
+
+    /* AX AY重映射 */
+    float tmp;
+
+    tmp = imu_data->ax;
+    imu_data->ax = imu_data->ay;
+    imu_data->ay = tmp;
 }

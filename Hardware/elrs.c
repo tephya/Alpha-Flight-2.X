@@ -65,7 +65,7 @@ static const uint8_t crc8_table[256] = {
   * @param  None
   * @retval None
   */
-void ELRS_INIT(void)
+void ELRS_Init(void)
 {
 
 	USART_InitTypeDef usart;

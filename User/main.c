@@ -48,8 +48,7 @@ void IWDG_Feed(void);
  * 6. 延时等待 SD 写盘， 确保日志文件不受损
  * 7. 退出 */
 int main(void){
-/*====================== Local variable declarations Start ===========================*/
-    uint8_t imu1_who = 0, imu2_who = 0;    
+/*====================== Local variable declarations Start ===========================*/ 
     uint32_t last_failsafe = 0;
     uint32_t last_slow = 0;
     uint32_t last_EFC = 0;        /* Last End Flight Confirm */
@@ -72,16 +71,23 @@ int main(void){
     Init_ADC1();
 	GPS_Init();
     Protection_Init();
+
     SD_SPI_Init();
+    SD_Init();
+    SD_SPI_DMA_Init();
+
     BB_Init();
+    BB_BufferInit();
+
     IIC_Init();
     BUZZER_Init();
-    ELRS_INIT();
+    ELRS_Init();
     
     /* IMU & New Architecture Init */
     ICM_SPI_Init();
-    ICM_Init(imu1_who, imu2_who);
+    ICM_Init();
     ICM_SPI1_DMA_Init();         /* 初始化 SPI DMA 通道 */
+
     Control_SoftwareTask_Init(); /* 初始化控制层软件中断 */
     ICM_TIM7_Trigger_Init();     /* 初始化 IMU 硬件触发定时器 */
     QMC_Init();
@@ -203,7 +209,8 @@ int main(void){
 /*================================ Main Loop Start (时间片轮询) ================================*/    
     while(1){
 		IWDG_Feed();		// 1s 要喂一次狗
-		
+        BB_Process();       // SD卡写入（消费）
+
         /* 接收遥控器数据 */
         ELRS_Poll();
         if(CRSF_PARSE_FRAME() == 1){
@@ -272,8 +279,7 @@ int main(void){
             Buzzer_Drive();
         }
 
-        /* 黑匣子阻塞写盘 
-		 * 后续改进方向： 采用环形缓冲区 / 双缓冲 + DMA */
+        /* 黑匣子阻塞写盘 */
         if(SysTick_ms - last_slow >= 500){
             last_slow = SysTick_ms;
 			uint32_t delta_time = SysTick_ms - last_time_32;
@@ -281,21 +287,20 @@ int main(void){
 			
 			record.time_ms = (uint16_t)delta_time;
             
-            /* 临界区保护：防止写盘拼装时被高频控制快照打断导致数据撕裂 */
+            /* 临界区保护关键计算：防止写盘拼装时被高频控制快照打断导致数据撕裂 */
             __disable_irq();
             record.angle_cdeg[0] = (int16_t)(att1.roll * 10000.0f);
 			record.angle_cdeg[1] = (int16_t)(att1.pitch * 10000.0f);
 			record.angle_cdeg[2] = (int16_t)(att1.yaw * 5000.0f);
-			
-			record.target_cdeg[0] = (int8_t)fc.roll_target;
+            __enable_irq();
+            record.target_cdeg[0] = (int8_t)fc.roll_target;
 			record.target_cdeg[1] = (int8_t)fc.pitch_target;
 			record.target_cdeg[2] = (int8_t)fc.yaw_target;
-			
-			record.motor[0] = motor_thr_data.m1;
+            
+            record.motor[0] = motor_thr_data.m1;
 			record.motor[1] = motor_thr_data.m2;
 			record.motor[2] = motor_thr_data.m3;
 			record.motor[3] = motor_thr_data.m4;		
-            __enable_irq(); 
                     
             /* 允许在此执行慢速阻塞写盘，高频控制链路已通过软件中断实现越顶 */
             BB_Log(&record);
