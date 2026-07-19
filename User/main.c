@@ -73,11 +73,13 @@ int main(void){
     Protection_Init();
 
     SD_SPI_Init();
-    SD_Init();
     SD_SPI_DMA_Init();
 
     BB_Init();
     BB_BufferInit();
+    /* SD卡读写速度设置为2.625MHz，留有充分写入裕量
+     *（速度越快写入越不稳定，过低速度又太快了） */
+    SD_SPI_SetSpeed(SPI_BaudRatePrescaler_16);
 
     IIC_Init();
     BUZZER_Init();
@@ -105,7 +107,7 @@ int main(void){
     
     /* PID & Controller Model Init */
     FlightController_Init();
-/*========================== Initialization End ==============================*/    
+/*========================== Initialization End ==============================*/   
 
 /*========================= Arm Delay Start ==============================*/        
     /* 等 4 秒让 ESC 完成启动 */
@@ -193,10 +195,7 @@ int main(void){
         Delay_ms(25);
     }
 
-    FlightController_Reset();
-	
-	/* SD卡读写速度设置为2.625MHz，留有充分写入裕量（速度越快写入越不稳定，过低速度又太快了） */
-    SD_SPI_SetSpeed(SPI_BaudRatePrescaler_16); 		
+    FlightController_Reset();	
     
 	/* 标定时间片轮询时间基准 */
     last_qmc = SysTick_ms;

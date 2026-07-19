@@ -12,7 +12,7 @@
 		SD_SPI_RWByte(&_r, 0xFF);         \
 	} while (0)
 
-#define SD_DMA_TIMEOUT_MS	10U
+#define SD_DMA_TIMEOUT_MS	20U
 #define SD_BUSY_TIMEOUT_MS	500U
 
 uint8_t SD_CardType = 3;
@@ -432,13 +432,19 @@ int8_t SD_ReadBlock(uint32_t block, uint8_t *buf)
 		res = SD_SendCmd(17, addr);
 		if(res == 0x00) break;
 	}
-	if(res != 0x00) return -1;
+	if(res != 0x00){
+		SD_CS_HIGH();
+		return -1;
+	}
 	
 	for(int i=0;i<500;i++){
 		SD_SPI_RWByte(&res, 0xFF);
 		if(res == 0xFE) break;
 	}
-	if(res != 0xFE) return -2;
+	if(res != 0xFE){
+		SD_CS_HIGH();
+		return -2;
+	}
 	
 	for(int i=0; i<512; i++){
 		SD_SPI_RWByte(&buf[i], 0xFF);
@@ -466,7 +472,6 @@ int8_t SD_ReadBlock(uint32_t block, uint8_t *buf)
   */
 int8_t SD_WriteBlock(uint32_t block, const uint8_t *buf)
 {
-	int8_t ret = 0;
 	uint8_t res, dummy;
 	uint32_t addr = (SD_CardType) ? block : block * 512U;
 	SD_CS_LOW();
@@ -478,16 +483,16 @@ int8_t SD_WriteBlock(uint32_t block, const uint8_t *buf)
 	}
 	
 	if(res != 0x00){
-		ret = -1;
-		goto exit;
+		SD_CS_HIGH();
+		return -1;
 	}
 	
 	SD_SPI_RWByte(&dummy, 0xFF);
 	SD_SPI_RWByte(&dummy, 0xFE);
 
 	if(SD_SPI_DMA_Transmit(buf, 512) != 0){
-		ret = -2;
-		goto exit;
+		SD_CS_HIGH();
+		return -2;
 	}
 
 	// 发两字节CRC后，紧跟着获取data response
@@ -501,8 +506,8 @@ int8_t SD_WriteBlock(uint32_t block, const uint8_t *buf)
 	}
 
 	if((res & 0x1F) != 0x05){
-		ret = -3;
-		goto exit;
+		SD_CS_HIGH();
+		return -3;
 	}
 	
 	// 等待卡结束内部写操作（MISO 为高表示闲）
@@ -512,12 +517,10 @@ int8_t SD_WriteBlock(uint32_t block, const uint8_t *buf)
 
 		if(SysTick_ms - start_time >= SD_BUSY_TIMEOUT_MS){
 			SD_CS_HIGH();
-			ret = -4;
-			goto exit;
+			return -4;
 		}
 	} while (res == 0x00);
 
-exit:
 	SD_CS_HIGH();
 	return 0;
 }

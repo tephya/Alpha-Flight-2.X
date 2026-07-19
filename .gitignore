@@ -11,6 +11,9 @@
 *.uvoptx
 *.uvguix.*
 
+.vscode/*.log
+.vscode/*.log.lock
+
 # Folders
 Objects/
 Listings/

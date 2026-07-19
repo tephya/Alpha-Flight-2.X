@@ -24,13 +24,14 @@ typedef char BB_Frame_Size_Check[(sizeof(BB_Frame_t) == FRAME_SIZE) ? 1 : -1];
  * 		-1 : SD 卡挂载失败 (FATFS mount error)
  * 		-2 : 文件创建/打开失败
  */
-int8_t
-BB_Init(void)
+int8_t BB_Init(void)
 {
 	char filename[16];
 	FILINFO	fno;
-
-	if(f_mount(&fs, "", 1) != FR_OK) return -1;		// 挂载SD card，同时FATFS自动调用SD_Init()
+	FRESULT res;
+	
+	res = f_mount(&fs, "", 1);
+	if(res != FR_OK) return -1;		// 挂载SD card，同时FATFS自动调用SD_Init()
 	
 	// 找第一个不存在的LOGxxx.CSV
 	for(int i = 1; i < 1000; i++){
