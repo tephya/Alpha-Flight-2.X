@@ -156,7 +156,7 @@ I (../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.h)(0x6A6058EA)
 I (../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_uart.h)(0x6A6058EA)
 I (../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os.h)(0x6A6058A2)
 I (../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h)(0x6A6058A2)
-I (../Core/Inc/data_types.h)(0x6A60788D)
+I (../Core/Inc/data_types.h)(0x6A608750)
 F (../Core/Src/adc.c)(0x6A605A49)(--c99 -c --cpu Cortex-M4.fp.sp -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../FATFS/Target -I ../FATFS/App -I ../Drivers/STM32F4xx_HAL_Driver/Inc -I ../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I ../Middlewares/Third_Party/FreeRTOS/Source/include -I ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 -I ../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F -I ../Middlewares/Third_Party/FatFs/src -I ../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I ../Drivers/CMSIS/Include-I.\RTE\_CubeMX_Create-IC:\Users\Jack\AppData\Local\Arm\Packs\ARM\CMSIS\6.3.0\CMSIS\Core\Include-D__UVISION_VERSION="536" -D_RTE_ -DSTM32F405xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32F405xx-o cubemx_create\adc.o --omf_browse cubemx_create\adc.crf --depend cubemx_create\adc.d)
 I (../Core/Inc/adc.h)(0x6A605A49)
 I (../Core/Inc/main.h)(0x6A605A4B)
