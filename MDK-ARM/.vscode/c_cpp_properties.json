@@ -4,6 +4,7 @@
             "name": "CubeMX_Create",
             "includePath": [
                 "d:\\Keil_Project\\Alpha\\Alpha2.0\\Core\\Inc",
+                "d:\\Keil_Project\\Alpha\\Alpha2.0\\App\\Inc",
                 "d:\\Keil_Project\\Alpha\\Alpha2.0\\FATFS\\Target",
                 "d:\\Keil_Project\\Alpha\\Alpha2.0\\FATFS\\App",
                 "d:\\Keil_Project\\Alpha\\Alpha2.0\\Drivers\\STM32F4xx_HAL_Driver\\Inc",
@@ -14,6 +15,7 @@
                 "d:\\Keil_Project\\Alpha\\Alpha2.0\\Middlewares\\Third_Party\\FatFs\\src",
                 "d:\\Keil_Project\\Alpha\\Alpha2.0\\Drivers\\CMSIS\\Device\\ST\\STM32F4xx\\Include",
                 "d:\\Keil_Project\\Alpha\\Alpha2.0\\Drivers\\CMSIS\\Include",
+                "d:\\Keil_Project\\Alpha\\Alpha2.0\\App\\src",
                 "d:\\Keil_Project\\Alpha\\Alpha2.0\\MDK-ARM",
                 "d:\\Keil_Project\\Alpha\\Alpha2.0\\Core\\Src",
                 "d:\\Keil_Project\\Alpha\\Alpha2.0\\Drivers\\STM32F4xx_HAL_Driver\\Src",
