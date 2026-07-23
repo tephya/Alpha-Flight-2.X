@@ -248,7 +248,7 @@ void GPS_Poll(void)
  * @brief   把最近读到的数据拷贝一份给调用方
  * @param   out 调用方提供的接收结构体指针
  */
-void GPS_CopyTo(GPS_Data_t *out)
+void GPS_Data_CopyTo(GPS_Data_t *out)
 {
     *out = gps_data;
 }

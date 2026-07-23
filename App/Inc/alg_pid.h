@@ -32,7 +32,6 @@ typedef struct
 
 } PID_t;
 
-extern PID_t pid_yaw;
 
 void PID_Init(PID_t *pid,
               float kp,

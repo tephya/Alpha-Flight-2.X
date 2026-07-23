@@ -26,7 +26,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "data_types.h"
+#include "app_shared_types.h"
+#include "app_nav.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -329,10 +330,7 @@ void StartTask_Nav(void *argument)
 {
   /* USER CODE BEGIN StartTask_Nav */
   /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  App_Nav_Task(argument);
   /* USER CODE END StartTask_Nav */
 }
 

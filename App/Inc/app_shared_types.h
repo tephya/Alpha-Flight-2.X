@@ -1,5 +1,5 @@
-#ifndef __DATA_TYPES_H
-#define __DATA_TYPES_H
+#ifndef __APP_SHARED_TYPES_H
+#define __APP_SHARED_TYPES_H
 
 #include "stm32f4xx_hal.h"
 
@@ -31,7 +31,6 @@ typedef struct
 
     float speed_knots;              // 地速，节（RMC）
     float course;                   // 航向，度（RMC）
-    float mag_heading_deg;          // 磁力计航向角  
 } NavState_t;
 
 typedef struct
@@ -42,6 +41,11 @@ typedef struct
     uint16_t bad_frame_count;       // 连续异常帧计数
     uint16_t good_frame_count;      // 连续健康帧计数（用于回切判定）
 } ImuHealthStatus_t;
+
+typedef struct
+{
+    float MX, MY, MZ; // 已转换Gauss值，已对齐NED坐标系
+} MagData_t;
 
 typedef enum
 {

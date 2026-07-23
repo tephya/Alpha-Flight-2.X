@@ -10,7 +10,7 @@ typedef struct
 } MAG_Data_t;
 
 HAL_StatusTypeDef QMC_Init(void);
-static void QMC_Raw2Gauss();
+static void QMC_Raw2Gauss(void);
 HAL_StatusTypeDef QMC_ReadData(void);
 void QMC_CopyTo(MAG_Data_t *out);
 
