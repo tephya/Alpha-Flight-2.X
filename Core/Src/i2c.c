@@ -21,7 +21,7 @@
 #include "i2c.h"
 
 /* USER CODE BEGIN 0 */
-
+#define IIC_TIMEOUT_MS  100   // IIC通信超时时间
 /* USER CODE END 0 */
 
 I2C_HandleTypeDef hi2c1;
@@ -112,7 +112,62 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
 }
 
 /* USER CODE BEGIN 1 */
+/**
+ * @brief   写单个寄存器
+ * @param   dev_addr  7位从机地址
+ * @param   reg_addr  寄存器地址
+ * @param   data      待写入数据
+ * @retval  HAL_OK=成功，其余为HAL错误码
+ */
+HAL_StatusTypeDef IIC_WriteReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t data)
+{
+  return HAL_I2C_Mem_Write(&hi2c1,
+                          (uint16_t)(dev_addr << 1),      // 7位地址左移1位拼成8位地址
+                          reg_addr,
+                          I2C_MEMADD_SIZE_8BIT,
+                          &data,
+                          1,
+                          IIC_TIMEOUT_MS);
+}
 
+
+/**
+ * @brief   读单个寄存器
+ * @param   dev_addr  7位从机地址
+ * @param   reg_addr  寄存器地址
+ * @param   data      读取结果输出指针
+ * @retval  HAL_OK=成功，其余为HAL错误码
+ */
+HAL_StatusTypeDef IIC_ReadReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data)
+{
+  return HAL_I2C_Mem_Read(&hi2c1,
+                          (uint16_t)(dev_addr << 1),
+                          reg_addr,
+                          I2C_MEMADD_SIZE_8BIT,
+                          data,
+                          1,
+                          IIC_TIMEOUT_MS);
+}
+
+
+/**
+ * @brief   从指定寄存器开始连续读多个字节
+ * @param   dev_addr  7位从机地址
+ * @param   reg_addr  起始寄存器地址
+ * @param   buf       接收缓冲区
+ * @param   len       读取字节数
+ * @retval  HAL_OK=成功，其余为HAL错误码
+ */
+HAL_StatusTypeDef IIC_ReadBurst(uint8_t dev_addr, uint8_t reg_addr, uint8_t *buf, uint16_t len)
+{
+  return HAL_I2C_Mem_Read(&hi2c1,
+                          (uint16_t)(dev_addr << 1),
+                          reg_addr,
+                          I2C_MEMADD_SIZE_8BIT,
+                          buf,
+                          len,
+                          IIC_TIMEOUT_MS);
+}
 /* USER CODE END 1 */
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

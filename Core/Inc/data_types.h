@@ -20,27 +20,28 @@ typedef struct
 
 typedef struct
 {
-    uint8_t fix;            // 0=无定位， 1=GPS， 2=DGPS
-    uint8_t satellites;     // 可用卫星数
-    uint8_t valid;          // RMC的A/V标志，‘A’=有效
+    uint8_t gps_fix_type;           // 0=无定位， 1=GPS， 2=DGPS
+    uint8_t gps_satellites;         // 可用卫星数
+    uint8_t valid;                  // RMC的A/V标志，‘A’=有效
 
-    int32_t latitude;         // 十进制-度，北正南负，纬度
-    int32_t longitude;        // 十进制-度，东正西负，经度
+    int32_t gps_lat, gps_lon;       // GPS经纬度，1e-7度定点整数存储，避免float精度问题
 
-    float altitude;         // 海拔，米（GGA）
-    float hdop;             // 水平精度因子（GGA）
+    float gps_altitude_m;           // 海拔，米（GGA）
+    float gps_hdop;                 // 水平精度因子（GGA）
 
-    float speed_knots;      // 地速，节（RMC）
-    float course;           // 航向，度（RMC）
-} GPS_Data_t;
+    float speed_knots;              // 地速，节（RMC）
+    float course;                   // 航向，度（RMC）
+    float mag_heading_deg;          // 磁力计航向角  
+} NavState_t;
 
 typedef struct
 {
-    float latitude;         // home 点的纬度
-    float longitude;        // home 点的经度
-    float altitude;         // home 点的 海拔高度
-    uint8_t valid;          // home 点是否已记录; 1=已记录， 0=未记录
-} GPS_Home_t;
+    uint8_t active_imu_sel;         // 当前该使用哪路数据，0=IMU1,1=IMU2
+    uint8_t imu1_healthy;           // 0=异常/1=正常
+    uint8_t imu2_healthy;           // 0=异常/1=正常
+    uint16_t bad_frame_count;       // 连续异常帧计数
+    uint16_t good_frame_count;      // 连续健康帧计数（用于回切判定）
+} ImuHealthStatus_t;
 
 typedef enum
 {
@@ -54,5 +55,11 @@ typedef enum
     EVT_IMU_FAULT,                  // IMU通信错误
     EVT_RC_LOST,                    // 遥控信号丢失
 } IndicatorEvent_t;
+
+typedef enum
+{
+    SENSOR_OK = 0,
+    SENSOR_FAIL
+} SensorStatus_t;
 
 #endif
