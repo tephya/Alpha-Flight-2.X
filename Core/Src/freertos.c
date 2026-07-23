@@ -139,6 +139,16 @@ osMessageQueueId_t IndicatorEventQueueHandle;
 const osMessageQueueAttr_t IndicatorEventQueue_attributes = {
   .name = "IndicatorEventQueue"
 };
+/* Definitions for MagDataMailbox */
+osMessageQueueId_t MagDataMailboxHandle;
+const osMessageQueueAttr_t MagDataMailbox_attributes = {
+  .name = "MagDataMailbox"
+};
+/* Definitions for NavCommandQueue */
+osMessageQueueId_t NavCommandQueueHandle;
+const osMessageQueueAttr_t NavCommandQueue_attributes = {
+  .name = "NavCommandQueue"
+};
 /* Definitions for RC_FailsafeTimer */
 osTimerId_t RC_FailsafeTimerHandle;
 const osTimerAttr_t RC_FailsafeTimer_attributes = {
@@ -218,6 +228,12 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of IndicatorEventQueue */
   IndicatorEventQueueHandle = osMessageQueueNew (8, sizeof(IndicatorEvent_t), &IndicatorEventQueue_attributes);
+
+  /* creation of MagDataMailbox */
+  MagDataMailboxHandle = osMessageQueueNew (1, sizeof(MagData_t), &MagDataMailbox_attributes);
+
+  /* creation of NavCommandQueue */
+  NavCommandQueueHandle = osMessageQueueNew (4, sizeof(NavCommand_t), &NavCommandQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */

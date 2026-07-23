@@ -8,13 +8,16 @@
 
 extern osMessageQueueId_t NavStateMailboxHandle;
 extern osMessageQueueId_t MagDataMailboxHandle;
+extern osMessageQueueId_t NavCommandQueueHandle;
 
 #define TASK_NAV_PERIOD_MS 20
+
+static uint8_t s_home_valid = 0;        // 缓存值，只在处理NAV_CMD_SET_HOME时更新
 
 static void Nav_BuildNavState(NavState_t *out)
 {
     GPS_Data_t gps;
-    GPS_Data_CopyTo(&gps);
+    GPS_CopyDataTo(&gps);
 
     out->gps_fix_type = gps.gps_fix_type;
     out->gps_satellites = gps.gps_satellites;
@@ -25,6 +28,7 @@ static void Nav_BuildNavState(NavState_t *out)
     out->gps_hdop = gps.gps_hdop;
     out->speed_knots = gps.speed_knots;
     out->course = gps.course;
+    out->home_valid = s_home_valid;
 }
 
 void App_Nav_Task(void *argument)
@@ -34,8 +38,20 @@ void App_Nav_Task(void *argument)
 
     for (;;)
     {
+        NavCommand_t cmd;
+        if(osMessageQueueGet(NavCommandQueueHandle, &cmd, NULL, 0) == osOK){
+            switch (cmd)
+            {
+            case NAV_CMD_SET_HOME:
+                s_home_valid = GPS_SetHome() ? 1 : 0;
+                break;
+            
+            default:
+                break;
+            }
+        }
+
         GPS_Poll();     // 消费DMA缓冲区，解析NMEA
-        QMC_ReadData(); // I2C1读磁力计，内部完成Raw2Gauss
 
         NavState_t nav;
         Nav_BuildNavState(&nav);
@@ -47,6 +63,7 @@ void App_Nav_Task(void *argument)
         osMessageQueuePut(NavStateMailboxHandle, &nav, 0, 0);
 
         MAG_Data_t full_mag;
+        QMC_ReadData(); // I2C1读磁力计，内部完成Raw2Gauss
         QMC_CopyTo(&full_mag);
 
         MagData_t mag = {

@@ -2,7 +2,7 @@
 #include "usart.h"
 #include <string.h>
 #include <stdlib.h>
-#include <stdbool.h>
+
 
 #define GPS_DMA_BUF_SIZE 256    // 单次burst通常几十到一百多字节，256留足余量
 #define NMEA_MAX_LEN 96 // NMEA spec max 82 bytes, 留余量
@@ -248,7 +248,7 @@ void GPS_Poll(void)
  * @brief   把最近读到的数据拷贝一份给调用方
  * @param   out 调用方提供的接收结构体指针
  */
-void GPS_Data_CopyTo(GPS_Data_t *out)
+void GPS_CopyDataTo(GPS_Data_t *out)
 {
     *out = gps_data;
 }
@@ -275,7 +275,7 @@ bool GPS_SetHome(void)
  * @brief   把起飞点数据拷贝一份给调用方
  * @param   out 调用方提供的接收结构体指针
  */
-void GPS_Home_CopyTo(GPS_Home_t *out)
+void GPS_CopyHomeTo(GPS_Home_t *out)
 {
     *out = gps_home;
 }

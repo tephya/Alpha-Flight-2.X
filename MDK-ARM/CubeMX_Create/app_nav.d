@@ -39,6 +39,7 @@ cubemx_create\app_nav.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_spi.h
 cubemx_create\app_nav.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim.h
 cubemx_create\app_nav.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.h
 cubemx_create\app_nav.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_uart.h
+cubemx_create\app_nav.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdbool.h
 cubemx_create\app_nav.o: ..\App\Inc\bsp_qmc5883.h
 cubemx_create\app_nav.o: ../Core/Inc/i2c.h
 cubemx_create\app_nav.o: ../Core/Inc/main.h

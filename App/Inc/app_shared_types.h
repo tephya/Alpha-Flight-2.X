@@ -23,14 +23,12 @@ typedef struct
     uint8_t gps_fix_type;           // 0=无定位， 1=GPS， 2=DGPS
     uint8_t gps_satellites;         // 可用卫星数
     uint8_t valid;                  // RMC的A/V标志，‘A’=有效
-
     int32_t gps_lat, gps_lon;       // GPS经纬度，1e-7度定点整数存储，避免float精度问题
-
     float gps_altitude_m;           // 海拔，米（GGA）
     float gps_hdop;                 // 水平精度因子（GGA）
-
     float speed_knots;              // 地速，节（RMC）
     float course;                   // 航向，度（RMC）
+    uint8_t home_valid;             // 1=返航点已记录，0=未记录/记录失败
 } NavState_t;
 
 typedef struct
@@ -41,6 +39,7 @@ typedef struct
     uint16_t bad_frame_count;       // 连续异常帧计数
     uint16_t good_frame_count;      // 连续健康帧计数（用于回切判定）
 } ImuHealthStatus_t;
+extern volatile ImuHealthStatus_t g_imu_health;
 
 typedef struct
 {
@@ -59,6 +58,11 @@ typedef enum
     EVT_IMU_FAULT,                  // IMU通信错误
     EVT_RC_LOST,                    // 遥控信号丢失
 } IndicatorEvent_t;
+
+typedef enum
+{
+    NAV_CMD_SET_HOME = 0,
+} NavCommand_t;
 
 typedef enum
 {

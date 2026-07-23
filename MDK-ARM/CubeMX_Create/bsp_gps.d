@@ -38,8 +38,8 @@ cubemx_create\bsp_gps.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_spi.h
 cubemx_create\bsp_gps.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim.h
 cubemx_create\bsp_gps.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.h
 cubemx_create\bsp_gps.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_uart.h
+cubemx_create\bsp_gps.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdbool.h
 cubemx_create\bsp_gps.o: ../Core/Inc/usart.h
 cubemx_create\bsp_gps.o: ../Core/Inc/main.h
 cubemx_create\bsp_gps.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
 cubemx_create\bsp_gps.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdlib.h
-cubemx_create\bsp_gps.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdbool.h

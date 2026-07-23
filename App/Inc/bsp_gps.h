@@ -2,6 +2,7 @@
 #define __BSP_GPS_H
 
 #include "stm32f4xx_hal.h"
+#include <stdbool.h>
 
 typedef struct
 {
@@ -26,7 +27,8 @@ typedef struct
 
 void GPS_Init(void);
 void GPS_Poll(void);
-void GPS_Data_CopyTo(GPS_Data_t *out);
-void GPS_Home_CopyTo(GPS_Home_t *out);
+bool GPS_SetHome(void);
+void GPS_CopyDataTo(GPS_Data_t *out);
+void GPS_CopyHomeTo(GPS_Home_t *out);
 
 #endif
