@@ -3,6 +3,6 @@
 
 #include "stm32f4xx_hal.h"
 
-void HAL_GPIO_EXIT_Callback(uint16_t GPIO_Pin);
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin);
 
 #endif
