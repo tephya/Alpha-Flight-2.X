@@ -16,6 +16,7 @@ typedef struct
 {
     float ax, ay, az;   // g
     float gx, gy, gz;   // dps
+    uint32_t timestamp_cycle;   // 本次读取时DWT->CYCCNT快照
 } IcmData_t;
 
 uint8_t ICM_InitAll(void);

@@ -829,11 +829,11 @@ ARM Macro Assembler    Page 13
               00001000 
               00000000 
 Command Line: --debug --xref --diag_suppress=9931 --cpu=Cortex-M4.fp.sp --apcs=
-interwork --depend=cubemx_create\startup_stm32f405xx.d -ocubemx_create\startup_
-stm32f405xx.o -I..\Core\Inc -I.\RTE\_CubeMX_Create -IC:\Users\Jack\AppData\Loca
-l\Arm\Packs\ARM\CMSIS\6.3.0\CMSIS\Core\Include --predefine="__UVISION_VERSION S
-ETA 536" --predefine="_RTE_ SETA 1" --predefine="STM32F405xx SETA 1" --predefin
-e="_RTE_ SETA 1" --list=startup_stm32f405xx.lst startup_stm32f405xx.s
+interwork --depend=..\objects\startup_stm32f405xx.d -o..\objects\startup_stm32f
+405xx.o -I..\Core\Inc -I.\RTE\_CubeMX_Create -IC:\Users\Jack\AppData\Local\Arm\
+Packs\ARM\CMSIS\6.3.0\CMSIS\Core\Include --predefine="__UVISION_VERSION SETA 53
+6" --predefine="_RTE_ SETA 1" --predefine="STM32F405xx SETA 1" --predefine="_RT
+E_ SETA 1" --list=startup_stm32f405xx.lst startup_stm32f405xx.s
 
 
 

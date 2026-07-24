@@ -19,6 +19,8 @@
 "cubemx_create\bsp_qmc5883.o"
 "cubemx_create\bsp_sdcard.o"
 "cubemx_create\bsp_icm42688.o"
+"cubemx_create\bsp_debug_uart.o"
+"cubemx_create\bsp_gpio_dispatch.o"
 "cubemx_create\startup_stm32f405xx.o"
 "cubemx_create\main.o"
 "cubemx_create\gpio.o"

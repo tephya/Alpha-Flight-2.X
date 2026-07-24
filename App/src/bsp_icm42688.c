@@ -119,11 +119,26 @@ static bool ICM_InitOne(IcmInstance_t inst)
 }
 
 /**
+ * @brief   打破上电锁存死锁。发起一次跟ICM_TriggerRead同样窗口的burst SPI事务
+ * @note    利用读写寄存器会清除DRDY锁存的作用，不解析这次读到的内容
+ * @param   inst    ICM实体编号
+ */
+static void ICM_ClearDataReadyLatch(IcmInstance_t inst)
+{
+    uint8_t tx[13] = {REG_ACC_XH | 0x80, 0};
+    uint8_t rx[13] = {0};
+
+    HAL_GPIO_WritePin(s_icmHw[inst].cs_port, s_icmHw[inst].cs_pin, GPIO_PIN_RESET);
+    HAL_SPI_TransmitReceive(s_icmHw[inst].hspi, tx, rx, 2, 10);
+    HAL_GPIO_WritePin(s_icmHw[inst].cs_port, s_icmHw[inst].cs_pin, GPIO_PIN_SET);
+}
+
+/**
  * @brief   初始化所有ICM实体
- * @retval  3=所有实体初始化成功,
- *          2=ICM实体2初始化成功,
- *          1=ICM实体1初始化成功,
- *          0=所有实体初始化均失败
+ * @retval  0=所有实体初始化成功,
+ *          1=ICM实体2初始化成功,
+ *          2=ICM实体1初始化成功,
+ *          3=所有实体初始化均失败
  */
 uint8_t ICM_InitAll(void)
 {
@@ -138,6 +153,14 @@ uint8_t ICM_InitAll(void)
         fail_mask |= (1U << 0);
     if(!ICM_InitOne(ICM_INSTANCE_2))
         fail_mask |= (1U << 1);
+
+    /* 打破“上电即锁存死锁”：INT_CFG1配置生效瞬间，如果内部DRDY状态位恰好已经是1，
+     * INT1会被直接顶到高电平所存住，EXTI只认Rising Edge，永远等不到“由低到高”的下一次跳变，
+     * 第一次中断永远不会发生。而读取数据寄存器这个动作本身会清除锁存，
+     * 所以这里手动强制读一次，只是借“读”这个动作的硬副作用把两颗IMU的INT1都先拉回低电平，
+     * 让后续EXTI能从这里开始正常检测到每一次真正的Rising Edge*/
+    ICM_ClearDataReadyLatch(ICM_INSTANCE_1);
+    ICM_ClearDataReadyLatch(ICM_INSTANCE_2);
 
     return fail_mask;
 }
@@ -166,8 +189,13 @@ void ICM_TriggerRead(IcmInstance_t inst)
     uint8_t rx[13] = {0};
 
     HAL_GPIO_WritePin(s_icmHw[inst].cs_port, s_icmHw[inst].cs_pin, GPIO_PIN_RESET);
-    HAL_SPI_TransmitReceive(s_icmHw[inst].hspi, tx, rx, 13, 10);
+    HAL_StatusTypeDef ret = HAL_SPI_TransmitReceive(s_icmHw[inst].hspi, tx, rx, 13, 10);
     HAL_GPIO_WritePin(s_icmHw[inst].cs_port, s_icmHw[inst].cs_pin, GPIO_PIN_SET);
+	
+	if (ret != HAL_OK)
+	{
+		return;   // 传输失败，直接放弃这次转换，保留上一次的旧数据，不要用垃圾值覆盖
+	}
 
     int16_t raw_ax = (int16_t)((rx[1] << 8) | rx[2]);
     int16_t raw_ay = (int16_t)((rx[3] << 8) | rx[4]);
@@ -183,6 +211,7 @@ void ICM_TriggerRead(IcmInstance_t inst)
     s_icmData[inst].gx = raw_gy * LSB_GYO;
     s_icmData[inst].gy = raw_gx * LSB_GYO;
     s_icmData[inst].gz = raw_gz * LSB_GYO;
+    s_icmData[inst].timestamp_cycle = DWT->CYCCNT;
 }
 
 /**

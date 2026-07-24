@@ -81,9 +81,6 @@ void Error_Handler(void);
 #define IMU1_SDI_GPIO_Port GPIOA
 #define IMU1_CS_Pin GPIO_PIN_4
 #define IMU1_CS_GPIO_Port GPIOC
-#define GPS_PPS_Pin GPIO_PIN_5
-#define GPS_PPS_GPIO_Port GPIOC
-#define GPS_PPS_EXTI_IRQn EXTI9_5_IRQn
 #define SD_CS_Pin GPIO_PIN_12
 #define SD_CS_GPIO_Port GPIOB
 #define SD_SCK_Pin GPIO_PIN_13

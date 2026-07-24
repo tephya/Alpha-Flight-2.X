@@ -51,3 +51,4 @@ cubemx_create\freertos.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_
 cubemx_create\freertos.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h
 cubemx_create\freertos.o: ..\App\Inc\app_shared_types.h
 cubemx_create\freertos.o: ..\App\Inc\app_nav.h
+cubemx_create\freertos.o: ..\App\Inc\app_flightctrl.h

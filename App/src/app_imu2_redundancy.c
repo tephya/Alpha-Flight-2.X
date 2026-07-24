@@ -1,6 +1,8 @@
 #include "app_imu2_redundancy.h"
 #include "cmsis_os2.h"
 #include "app_shared_types.h"
+#include "bsp_debug_uart.h"
+#include <math.h>
 
 volatile ImuHealthStatus_t g_imu_health = {
     .active_imu_sel = 0,
@@ -14,14 +16,20 @@ volatile ImuHealthStatus_t g_imu_health = {
 #define SWITCH_AWAY_THRESHOLD 5     // 连续5帧异常判定切走
 #define SWITCH_BACK_THRESHOLD 200   // 连续200帧健康判定切回
 
-/*====== 交叉对比阈值 ======*/
-#define GYRO_DIFF_THRESHOLD_DPS 0.0f
-#define ACC_DIFF_THRESHOLD_G 0.0f
+/*====== 交叉对比阈值: 静止状态测试稳健阈值(meadian+4*MADstd)与动态批(实际飞行效果，不含剧烈翻滚)P99
+ * 取较大者，6轴分开判断 ======*/
+#define ACC_AX_DIFF_THRESHOLD_G 0.1005f
+#define ACC_AY_DIFF_THRESHOLD_G 0.0244f
+#define ACC_AZ_DIFF_THRESHOLD_G 0.0898f
+#define GYRO_GX_DIFF_THRESHOLD_G 1.9520f
+#define GYRO_GY_DIFF_THRESHOLD_G 2.5620f
+#define GYRO_GZ_DIFF_THRESHOLD_G 3.5990f
 
 /* ODR=800Hz, 周期1.25ms，超时=3倍周期-3.75ms，向上取整到RTOS tick(1ms)为4ms 
  * 注：这是ms级tick，用于故障超时判定精度足够（只是留裕量的看门狗），
  *     不能拿这个tick分辨率去测量dt，dt必须DWT测*/
 #define ICM_DRDY_WAIT_TIMEOUT_MS 4
+static const float MAX_AGE_S = 3.0f / ICM_ODR_HZ;
 
 /*--------------- DWT高精度计时，用于测量真实dt -----------------*/
 static uint32_t s_last_cycle = 0;
@@ -70,16 +78,26 @@ static float DWT_MeasureDt(void)
 } 
 
 /**
- * @brief   交叉比对两个ICM测量的数据
+ * @brief   交叉验证两个ICM测量的数据，判断提供姿态角的传感器是否出现异常
  * @param   a ICM1实体
  * @param   b ICM2实体
- * @retval  false(未确定阈值前暂时的返回值)
+ * @retval  false=传感器正常
+ *          true=传感器异常
  */
 static bool CrossCheck_IsAbnormal(const IcmData_t *a, const IcmData_t *b)
 {
-    (void)a;
-    (void)b;
-    /*TODO: 确定阈值后启用*/
+    if (fabs(a->ax - b->ax) > ACC_AX_DIFF_THRESHOLD_G)
+        return true;
+    if (fabs(a->ay - b->ay) > ACC_AY_DIFF_THRESHOLD_G)
+        return true;
+    if (fabs(a->az - b->az) > ACC_AZ_DIFF_THRESHOLD_G)
+        return true;
+    if (fabs(a->gx - b->gx) > GYRO_GX_DIFF_THRESHOLD_G)
+        return true;
+    if (fabs(a->gy - b->gy) > GYRO_GY_DIFF_THRESHOLD_G)
+        return true;
+    if (fabs(a->gz - b->gz) > GYRO_GZ_DIFF_THRESHOLD_G)
+        return true;
     return false;
 }
 
@@ -181,17 +199,19 @@ bool ImuRedundancy_Update(IcmData_t *out, float *dt_s)
     ICM_CopyTo(ICM_INSTANCE_1, &d1);
     ICM_CopyTo(ICM_INSTANCE_2, &d2);
 
-    // 只有两路都拿到新数据时才交叉比对
-    if(got1 && got2)
+    DebugUart_PrintImuDiff(&d1, &d2);
+
+    uint32_t now_cycle = DWT->CYCCNT;
+    float age1_s = (float)(now_cycle - d1.timestamp_cycle) / (float)SystemCoreClock;
+    float age2_s = (float)(now_cycle - d2.timestamp_cycle) / (float)SystemCoreClock;
+
+    if (age1_s > MAX_AGE_S || age2_s > MAX_AGE_S)
     {
-        if(CrossCheck_IsAbnormal(&d1, &d2))
-        {
-            Health_RecordBad();
-        }
-        else
-        {
-            Health_RecordGood();
-        }
+        Health_RecordBad();
+    }
+    else if (CrossCheck_IsAbnormal(&d1, &d2))
+    {
+        Health_RecordBad();
     }
     else
     {

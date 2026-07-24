@@ -28,6 +28,7 @@
 /* USER CODE BEGIN Includes */
 #include "app_shared_types.h"
 #include "app_nav.h"
+#include "app_flightctrl.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -294,7 +295,7 @@ void StartTask_FlightControl(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    App_FlightCtrl_Task(argument);
   }
   /* USER CODE END StartTask_FlightControl */
 }

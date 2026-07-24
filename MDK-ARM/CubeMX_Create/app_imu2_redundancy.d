@@ -42,3 +42,5 @@ cubemx_create\app_imu2_redundancy.o: ..\App\Inc\bsp_icm42688.h
 cubemx_create\app_imu2_redundancy.o: ../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.h
 cubemx_create\app_imu2_redundancy.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdbool.h
 cubemx_create\app_imu2_redundancy.o: ..\App\Inc\app_shared_types.h
+cubemx_create\app_imu2_redundancy.o: ..\App\Inc\bsp_debug_uart.h
+cubemx_create\app_imu2_redundancy.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\math.h
