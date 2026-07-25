@@ -503,6 +503,11 @@
               <FileType>1</FileType>
               <FilePath>..\App\Src\alg_controller.c</FilePath>
             </File>
+            <File>
+              <FileName>alg_mixer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\alg_mixer.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
