@@ -498,6 +498,11 @@
               <FileType>1</FileType>
               <FilePath>..\App\Src\app_shared_types.c</FilePath>
             </File>
+            <File>
+              <FileName>alg_controller.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\alg_controller.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
