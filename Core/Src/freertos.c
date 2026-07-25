@@ -29,6 +29,7 @@
 #include "app_shared_types.h"
 #include "app_nav.h"
 #include "app_flightctrl.h"
+#include "bsp_qmc5883.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

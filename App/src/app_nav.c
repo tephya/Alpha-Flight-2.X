@@ -62,14 +62,9 @@ void App_Nav_Task(void *argument)
         }
         osMessageQueuePut(NavStateMailboxHandle, &nav, 0, 0);
 
-        MAG_Data_t full_mag;
+        MagData_t mag;
         QMC_ReadData(); // I2C1读磁力计，内部完成Raw2Gauss
-        QMC_CopyTo(&full_mag);
-
-        MagData_t mag = {
-            .MX = full_mag.MX,
-            .MY = full_mag.MY,
-            .MZ = full_mag.MZ};
+        QMC_CopyTo(&mag);
 
         if (osMessageQueueGetSpace(MagDataMailboxHandle) == 0)
         {
