@@ -58,13 +58,6 @@ const osThreadAttr_t Task_FlightCtrl_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityRealtime7,
 };
-/* Definitions for Task_IMU2_RDD */
-osThreadId_t Task_IMU2_RDDHandle;
-const osThreadAttr_t Task_IMU2_RDD_attributes = {
-  .name = "Task_IMU2_RDD",
-  .stack_size = 384 * 4,
-  .priority = (osPriority_t) osPriorityRealtime6,
-};
 /* Definitions for Task_RC_LINK */
 osThreadId_t Task_RC_LINKHandle;
 const osThreadAttr_t Task_RC_LINK_attributes = {
@@ -167,7 +160,6 @@ const osEventFlagsAttr_t SystemReadyEventGroup_attributes = {
 /* USER CODE END FunctionPrototypes */
 
 void StartTask_FlightControl(void *argument);
-void StartTask_IMU2_RDD(void *argument);
 void StartTask_RC_LINK(void *argument);
 void StartTask_Nav(void *argument);
 void StartTask_Blackbox(void *argument);
@@ -244,9 +236,6 @@ void MX_FREERTOS_Init(void) {
   /* creation of Task_FlightCtrl */
   Task_FlightCtrlHandle = osThreadNew(StartTask_FlightControl, NULL, &Task_FlightCtrl_attributes);
 
-  /* creation of Task_IMU2_RDD */
-  Task_IMU2_RDDHandle = osThreadNew(StartTask_IMU2_RDD, NULL, &Task_IMU2_RDD_attributes);
-
   /* creation of Task_RC_LINK */
   Task_RC_LINKHandle = osThreadNew(StartTask_RC_LINK, NULL, &Task_RC_LINK_attributes);
 
@@ -298,24 +287,6 @@ void StartTask_FlightControl(void *argument)
     App_FlightCtrl_Task(argument);
   }
   /* USER CODE END StartTask_FlightControl */
-}
-
-/* USER CODE BEGIN Header_StartTask_IMU2_RDD */
-/**
-* @brief Function implementing the Task_IMU2_RDD thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartTask_IMU2_RDD */
-void StartTask_IMU2_RDD(void *argument)
-{
-  /* USER CODE BEGIN StartTask_IMU2_RDD */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END StartTask_IMU2_RDD */
 }
 
 /* USER CODE BEGIN Header_StartTask_RC_LINK */

@@ -14,6 +14,9 @@ MDK-ARM/*.dep
 *.uvoptx
 *.uvguix.*
 
+# 编译生成的文件
+Objects
+
 # VSCode 相关（如果这些是您本机路径专属，不想让协作者用您的绝对路径）
 # 注意：您的 c_cpp_properties.json 里是绝对路径，如果换电脑/换人会失效
 # 是否忽略 .vscode 需要您决定，见下方说明
