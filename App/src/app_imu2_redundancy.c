@@ -105,16 +105,42 @@ static void Health_RecordBad(void)
     
     if(g_imu_health.bad_frame_count >= SWITCH_AWAY_THRESHOLD)
     {
-        if(g_imu_health.active_imu_sel == 0)
+        uint8_t standby_healthy = (g_imu_health.active_imu_sel == 0
+                                       ? g_imu_health.imu2_healthy
+                                       : g_imu_health.imu1_healthy);
+        
+        if(standby_healthy)
         {
-            g_imu_health.imu1_healthy = 0;
-            g_imu_health.active_imu_sel = 1;
+            // 备用IMU仍健康，正常切换
+            if (g_imu_health.active_imu_sel == 0)
+            {
+                g_imu_health.imu1_healthy = 0;
+                g_imu_health.active_imu_sel = 1;
+            }
+            else
+            {
+                g_imu_health.imu2_healthy = 0;
+                g_imu_health.active_imu_sel = 0;
+            }
+            g_imu_health.dual_fault = 0;
         }
         else
         {
-            g_imu_health.imu2_healthy = 0;
-            g_imu_health.active_imu_sel = 0;
+            /**
+             * 备用也不健康——切换没有意义，只会在两个都有问题的芯片来回震荡。
+             * 冻结active_imu_sel不变，只标记当前这颗也不健康，置起dual_faule。
+             * 数据仍然输出（聊胜于无），
+             * 但下游必须自己检查这个标志，决定还要不要信任这份数据
+             * 是否因此触发保护性动作，不是这一层该管的事
+             */
+            if(g_imu_health.active_imu_sel == 0)
+                g_imu_health.imu1_healthy = 0;
+            else
+                g_imu_health.imu2_healthy = 0;
+
+            g_imu_health.dual_fault = 1;
         }
+
         g_imu_health.bad_frame_count = 0;
         g_imu_health.good_frame_count = 0;
     }
@@ -129,20 +155,28 @@ static void Health_RecordGood(void)
     if(g_imu_health.good_frame_count < 0xFFFF)
         g_imu_health.good_frame_count++;
     
-    // 若当前非主用IMU连续健康达到阈值，允许切回（快切慢回）
-    uint8_t standby_healthy_flag = (g_imu_health.active_imu_sel == 0)
-                                       ? g_imu_health.imu2_healthy
-                                       : g_imu_health.imu1_healthy;
-
-    (void)standby_healthy_flag;
-
+    // 当前active IMU本身持续正常，标志维持healthy
     if(g_imu_health.active_imu_sel == 0)
-    {
         g_imu_health.imu1_healthy = 1;
-    }
     else
-    {
         g_imu_health.imu2_healthy = 1;
+
+    /**
+     * active IMU本身能持续正常输出，说明至少有一路可信，
+     * 之前锁存的双路状态解除(如锁存)
+     */
+    g_imu_health.dual_fault = 0;
+
+    /**
+     * 备用IMU的数据能通过交叉比对+新鲜度检查，说明它本身也在正常输出，
+     * 达到切回阈值后恢复它的健康标志——只恢复标志，不触发实际切换
+     */
+    if(g_imu_health.good_frame_count >= SWITCH_AWAY_THRESHOLD)
+    {
+        if(g_imu_health.active_imu_sel == 0)
+            g_imu_health.imu2_healthy = 1;
+        else
+            g_imu_health.imu1_healthy = 1;
     }
 }
 

@@ -49,6 +49,7 @@ typedef struct
     uint8_t imu2_healthy;           // 0=异常/1=正常
     uint16_t bad_frame_count;       // 连续异常帧计数
     uint16_t good_frame_count;      // 连续健康帧计数（用于回切判定）
+    uint8_t dual_fault;             // 锁存标志，双路都不健康时置1；任意一路健康时由RecordGood清0
 } ImuHealthStatus_t;
 
 typedef struct

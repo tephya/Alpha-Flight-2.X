@@ -1,4 +1,5 @@
 #include "bsp_qmc5883.h"
+#include <math.h>
 
 #define IIC_CHECK(x) do{                \
             HAL_StatusTypeDef _s = (x); \
@@ -6,7 +7,6 @@
                 return _s;              \
         }while(0)
 
-#define M_PI 3.14159265358979323846f
 #define QMC_SENSITIVITY (1.0f / 3750.0f)
 #define QMC_ADDR 0x2C
 

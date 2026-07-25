@@ -6,6 +6,7 @@ volatile ImuHealthStatus_t g_imu_health = {
     .imu2_healthy = 1,
     .bad_frame_count = 0,
     .good_frame_count = 0,
+    .dual_fault = 0
 };
 
 volatile SystemHeartbeat_t g_heartbeat = {0};
