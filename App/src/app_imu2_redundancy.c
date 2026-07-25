@@ -14,9 +14,9 @@
 #define ACC_AX_DIFF_THRESHOLD_G 0.1005f
 #define ACC_AY_DIFF_THRESHOLD_G 0.0244f
 #define ACC_AZ_DIFF_THRESHOLD_G 0.0898f
-#define GYRO_GX_DIFF_THRESHOLD_G 1.9520f
-#define GYRO_GY_DIFF_THRESHOLD_G 2.5620f
-#define GYRO_GZ_DIFF_THRESHOLD_G 3.5990f
+#define GYRO_GX_DIFF_THRESHOLD_DPS 1.9520f
+#define GYRO_GY_DIFF_THRESHOLD_DPS 2.5620f
+#define GYRO_GZ_DIFF_THRESHOLD_DPS 3.5990f
 
 /* ODR=800Hz, 周期1.25ms，超时=3倍周期-3.75ms，向上取整到RTOS tick(1ms)为4ms 
  * 注：这是ms级tick，用于故障超时判定精度足够（只是留裕量的看门狗），
@@ -79,17 +79,17 @@ static float DWT_MeasureDt(void)
  */
 static bool CrossCheck_IsAbnormal(const IcmData_t *a, const IcmData_t *b)
 {
-    if (fabs(a->ax - b->ax) > ACC_AX_DIFF_THRESHOLD_G)
+    if (fabsf(a->ax - b->ax) > ACC_AX_DIFF_THRESHOLD_G)
         return true;
-    if (fabs(a->ay - b->ay) > ACC_AY_DIFF_THRESHOLD_G)
+    if (fabsf(a->ay - b->ay) > ACC_AY_DIFF_THRESHOLD_G)
         return true;
-    if (fabs(a->az - b->az) > ACC_AZ_DIFF_THRESHOLD_G)
+    if (fabsf(a->az - b->az) > ACC_AZ_DIFF_THRESHOLD_G)
         return true;
-    if (fabs(a->gx - b->gx) > GYRO_GX_DIFF_THRESHOLD_G)
+    if (fabsf(a->gx - b->gx) > GYRO_GX_DIFF_THRESHOLD_DPS)
         return true;
-    if (fabs(a->gy - b->gy) > GYRO_GY_DIFF_THRESHOLD_G)
+    if (fabsf(a->gy - b->gy) > GYRO_GY_DIFF_THRESHOLD_DPS)
         return true;
-    if (fabs(a->gz - b->gz) > GYRO_GZ_DIFF_THRESHOLD_G)
+    if (fabsf(a->gz - b->gz) > GYRO_GZ_DIFF_THRESHOLD_DPS)
         return true;
     return false;
 }
@@ -171,7 +171,7 @@ static void Health_RecordGood(void)
      * 备用IMU的数据能通过交叉比对+新鲜度检查，说明它本身也在正常输出，
      * 达到切回阈值后恢复它的健康标志——只恢复标志，不触发实际切换
      */
-    if(g_imu_health.good_frame_count >= SWITCH_AWAY_THRESHOLD)
+    if(g_imu_health.good_frame_count >= SWITCH_BACK_THRESHOLD)
     {
         if(g_imu_health.active_imu_sel == 0)
             g_imu_health.imu2_healthy = 1;

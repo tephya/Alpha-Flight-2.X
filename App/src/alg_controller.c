@@ -82,7 +82,7 @@ float YawHeadingHold_Update(PID_t *pid_yaw,
     if(yaw_err > 180.0f)
         yaw_err -= 360.0f;
     if(yaw_err < -180.0f)
-        yaw_err += 180.0f;
+        yaw_err += 360.0f;
 
     PID_SetTarget(pid_yaw, 0.0f);
 

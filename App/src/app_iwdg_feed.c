@@ -18,7 +18,7 @@ void App_IwdgFeed_Task(void *argument)
     {
         uint32_t now = osKernelGetTickCount();
 
-        uint32_t flightctrl_age = now - g_heartbeat.filghtctrl_last_tick;
+        uint32_t flightctrl_age = now - g_heartbeat.flightctrl_last_tick;
 
         bool all_healthy = (flightctrl_age <= FLIGHTCTRL_HEARTBEAT_TIMEOUT_MS);
 

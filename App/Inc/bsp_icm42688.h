@@ -32,7 +32,5 @@ extern osEventFlagsId_t g_icmDataReadyEvtId;
 
 /*====== ODR=800Hz对应周期，供超时计算使用 ======*/
 #define ICM_ODR_HZ 800
-#define ICM_PERIOD_MS 2             // 1.25ms向上取整为2ms tick，若tick更细可改用us级定时器
-#define ICM_DRDY_TIMEOUT_MS 4       // 3倍周期，按ms tick向上取整
 
 #endif

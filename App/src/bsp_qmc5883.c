@@ -1,5 +1,4 @@
 #include "bsp_qmc5883.h"
-#include <math.h>
 
 #define IIC_CHECK(x) do{                \
             HAL_StatusTypeDef _s = (x); \
@@ -36,7 +35,7 @@ HAL_StatusTypeDef QMC_Init(void)
 /**
  * @brief   原始数据转物理单位，并对齐NED坐标系
  */
-static void QMC_Raw2Gauss()
+static void QMC_Raw2Gauss(void)
 {
     mag_data.MX = mag_data.rmx * QMC_SENSITIVITY;
     mag_data.MY = -1 * mag_data.rmy * QMC_SENSITIVITY;  // 取负数，MY才符合 NED 的Y轴(符合作者的机体坐标系，请根据实际情况来)

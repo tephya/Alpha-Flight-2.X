@@ -47,6 +47,8 @@ typedef struct
     float yaw_output;
 } RateController_t;
 
+extern RateController_t rate_controller;
+
 void RateController_Init(void);
 void RateController_Reset(void);
 void RateController_Update(float roll_rate_target,

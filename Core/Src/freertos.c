@@ -30,6 +30,7 @@
 #include "app_nav.h"
 #include "app_flightctrl.h"
 #include "bsp_qmc5883.h"
+#include "bsp_elrs.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

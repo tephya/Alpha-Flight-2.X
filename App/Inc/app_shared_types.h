@@ -22,12 +22,6 @@ typedef __packed struct
     int8_t target_cdeg[3];          // 目标角
 } Blackbox_Frame_t;
 
-typedef struct
-{
-    uint16_t channels[16];          // 16路遥控通道值(172~1811)
-    uint8_t link_quality;           // ELRS链路信号质量(LQ)(0~100)
-    uint8_t rssi;                   // 信号强度
-} RCChannelData_t;
 
 typedef struct
 {
@@ -54,10 +48,9 @@ typedef struct
 
 typedef struct
 {
-    volatile uint32_t filghtctrl_last_tick;
+    volatile uint32_t flightctrl_last_tick;
     // res task
 } SystemHeartbeat_t;
-
 
 typedef enum
 {
@@ -69,7 +62,7 @@ typedef enum
     EVT_SD_CARD_FULL,               
     EVT_SD_CARD_ERROR,              // 读写SD卡出错
     EVT_IMU_FAULT,                  // IMU通信错误
-    EVT_RC_LOST,                    // 遥控信号丢失
+    EVT_RC_LOST                     // 遥控信号丢失
 } IndicatorEvent_t;
 
 typedef enum

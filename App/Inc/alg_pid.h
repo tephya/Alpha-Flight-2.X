@@ -1,7 +1,7 @@
 #ifndef __ALG_PID_H
 #define __ALG_PID_H
 
-#include "stm32f4xx_hal.h"
+#include <stdint.h>
 
 typedef struct
 {

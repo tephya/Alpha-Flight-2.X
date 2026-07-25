@@ -22,8 +22,8 @@ static void Nav_BuildNavState(NavState_t *out)
     out->gps_fix_type = gps.gps_fix_type;
     out->gps_satellites = gps.gps_satellites;
     out->valid = gps.valid;
-    out->gps_lat = (int32_t)(gps.gps_lat * 1e7f);
-    out->gps_lon = (int32_t)(gps.gps_lon * 1e7f);
+    out->gps_lat = gps.gps_lat;
+    out->gps_lon = gps.gps_lon;
     out->gps_altitude_m = gps.gps_altitude_m;
     out->gps_hdop = gps.gps_hdop;
     out->speed_knots = gps.speed_knots;
@@ -49,6 +49,15 @@ void App_Nav_Task(void *argument)
             default:
                 break;
             }
+        }
+
+        /**
+         * 开机后持续自动重试，直到成功为止，维持旧架构“上电即自动搜星”的语义；
+         * 一旦成功就不再重试，除非以后有外部命令显式触发
+         */
+        if(!s_home_valid)
+        {
+            s_home_valid = GPS_SetHome() ? 1 : 0;
         }
 
         GPS_Poll();     // 消费DMA缓冲区，解析NMEA
