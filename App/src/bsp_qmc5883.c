@@ -10,6 +10,12 @@
 #define QMC_SENSITIVITY (1.0f / 3750.0f)
 #define QMC_ADDR 0x2C
 
+typedef struct
+{
+    int16_t rmx, rmy, rmz;
+    float MX, MY, MZ;
+} MAG_Data_t;
+
 static MAG_Data_t mag_data;
 
 /**
@@ -60,7 +66,9 @@ HAL_StatusTypeDef QMC_ReadData(void)
  * @brief   把最近读到的数据拷贝一份给调用方
  * @param   out 调用方提供的接收结构体指针
  */
-void QMC_CopyTo(MAG_Data_t *out)
+void QMC_CopyTo(MagData_t *out)
 {
-    *out = mag_data;
+    out->MX = mag_data.MX;
+    out->MY = mag_data.MY;
+    out->MZ = mag_data.MZ;
 }

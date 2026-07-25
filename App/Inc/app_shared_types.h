@@ -59,11 +59,6 @@ typedef struct
 } SystemHeartbeat_t;
 
 
-typedef struct
-{
-    float MX, MY, MZ; // 已转换Gauss值，已对齐NED坐标系
-} MagData_t;
-
 typedef enum
 {
     EVT_ARMED,                      // 解锁

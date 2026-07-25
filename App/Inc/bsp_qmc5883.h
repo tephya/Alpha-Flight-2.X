@@ -5,13 +5,12 @@
 
 typedef struct
 {
-    int16_t rmx, rmy, rmz;
-    float MX, MY, MZ;
-} MAG_Data_t;
+    float MX, MY, MZ; // 已转换Gauss值，已对齐NED坐标系
+} MagData_t;
 
 HAL_StatusTypeDef QMC_Init(void);
 static void QMC_Raw2Gauss(void);
 HAL_StatusTypeDef QMC_ReadData(void);
-void QMC_CopyTo(MAG_Data_t *out);
+void QMC_CopyTo(MagData_t *out);
 
 #endif
