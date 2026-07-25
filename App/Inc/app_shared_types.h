@@ -3,6 +3,17 @@
 
 #include "stm32f4xx_hal.h"
 
+// SystemReadyEventGroup bit定义，ARM解锁前必须全部置位
+#define SYSREADY_BIT_HOME_VALID (1 << 0) // Task_Nav置位
+#define SYSREADY_BIT_MAG_OK (1 << 1) // Task_Nav置位
+#define SYSREADY_BIT_VOLTAGE_OK (1 << 2) // Task_PowerMonit置位
+#define SYSREADY_BIT_RC_LINK_OK (1 << 3) // Task_RC_Link置位
+#define SYSREADY_BIT_IMU_HEALTH_OK (1 << 4) // Task_FlightCtrl置位，读g_imu_health
+
+#define SYSREADY_ARM_MASK (SYSREADY_BIT_HOME_VALID | SYSREADY_BIT_MAG_OK |     \
+                           SYSREADY_BIT_VOLTAGE_OK | SYSREADY_BIT_RC_LINK_OK | \
+                           SYSREADY_BIT_IMU_HEALTH_OK)
+
 typedef __packed struct
 {
     uint16_t time_ms;               // 时间戳
