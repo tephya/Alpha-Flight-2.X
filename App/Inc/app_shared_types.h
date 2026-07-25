@@ -39,7 +39,13 @@ typedef struct
     uint16_t bad_frame_count;       // 连续异常帧计数
     uint16_t good_frame_count;      // 连续健康帧计数（用于回切判定）
 } ImuHealthStatus_t;
-extern volatile ImuHealthStatus_t g_imu_health;
+
+typedef struct
+{
+    volatile uint32_t filghtctrl_last_tick;
+    // res task
+} SystemHeartbeat_t;
+
 
 typedef struct
 {
@@ -69,5 +75,8 @@ typedef enum
     SENSOR_OK = 0,
     SENSOR_FAIL
 } SensorStatus_t;
+
+extern volatile ImuHealthStatus_t g_imu_health;
+extern volatile SystemHeartbeat_t g_heartbeat;
 
 #endif

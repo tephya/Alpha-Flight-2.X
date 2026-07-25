@@ -1,8 +1,8 @@
 #include "app_flightctrl.h"
 #include "bsp_icm42688.h"
 #include "app_imu2_redundancy.h"
-#include "iwdg.h"
-#include "bsp_debug_uart.h"
+#include "app_shared_types.h"
+
 
 void App_FlightCtrl_Task(void *argument)
 {
@@ -22,14 +22,14 @@ void App_FlightCtrl_Task(void *argument)
     for (;;)
     {
         bool ok = ImuRedundancy_Update(&active_data, &dt);
-
+        g_heartbeat.filghtctrl_last_tick = osKernelGetSysTimerCount();
         if (ok)
         {
             /* active_data是当前应使用的姿态数据，测试阶段暂不消费它，
              * 后续接Attitude_CptYaw等解算函数时从这里往下接。
              * 交叉比对打印(DebugUart_PrintImuDiff)是否已经按之前说的
              * 手动加进ImuRedundancy_Update里了，少爷确认一下 */
-            HAL_IWDG_Refresh(&hiwdg);
+            
         }
 
         /* 测试阶段：循环体到这里结束，下一轮由osEventFlagsWait本身阻塞节流，

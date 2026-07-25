@@ -4,13 +4,6 @@
 #include "bsp_debug_uart.h"
 #include <math.h>
 
-volatile ImuHealthStatus_t g_imu_health = {
-    .active_imu_sel = 0,
-    .imu1_healthy = 1,
-    .imu2_healthy = 1,
-    .bad_frame_count = 0,
-    .good_frame_count = 0,
-};
 
 /*====== 切换阈值 ======*/
 #define SWITCH_AWAY_THRESHOLD 5     // 连续5帧异常判定切走
