@@ -1,8 +1,10 @@
 #include "app_flightctrl.h"
 #include "app_imu2_redundancy.h"
 #include "app_rc_link.h"
+#include "app_arm.h"
 #include "app_shared_types.h"
 #include "bsp_elrs.h"
+#include "bsp_dshot.h"
 #include "bsp_qmc5883.h"
 #include "bsp_icm42688.h"
 #include "alg_attitude.h"
@@ -142,6 +144,8 @@ void App_FlightCtrl_Task(void *argument)
 
     ImuRedundancy_Init();
     FlightControl_Init();
+    Arm_Init();
+    BSP_DSHOT_Init();
 
     IcmData_t active_data;
     float dt;
@@ -170,11 +174,21 @@ void App_FlightCtrl_Task(void *argument)
             // 获取RC数据
             osMessageQueueGet(RCChannelMailboxHandle, &s_rc_last, NULL, 0);
 
+            Arm_Update(&s_rc_last, fc.roll_meas, fc.pitch_meas);
+
             FlightControl_Update(dt, active_data.gx, active_data.gy, active_data.gz);
 
             Mixer(fc.roll_cmd, fc.pitch_cmd, fc.yaw_cmd, fc.throttle, &m1, &m2, &m3, &m4);
 
-            // TODO: ARM状态机接好之前，不真送到电机
+            if(g_arm_state == ARM_STATE_ARMED)
+            {
+                BSP_DSHOT_Send((uint16_t)(m1 + 48U), (uint16_t)(m2 + 48U),
+                               (uint16_t)(m3 + 48U), (uint16_t)(m4 + 48U));
+            }
+            else
+            {
+                BSP_DSHOT_Send(0, 0, 0, 0);
+            }
         }
 
         /* 测试阶段：循环体到这里结束，下一轮由osEventFlagsWait本身阻塞节流，

@@ -54,6 +54,12 @@ typedef struct
 
 typedef enum
 {
+    ARM_STATE_DISARMED = 0,
+    ARM_STATE_ARMED = 1,
+} ArmState_t;
+
+typedef enum
+{
     EVT_ARMED,                      // 解锁
     EVT_DISARMED,                   // 未解锁
     EVT_LOW_BATTERY,                // 低电压(<14.0V)
@@ -62,7 +68,7 @@ typedef enum
     EVT_SD_CARD_FULL,               
     EVT_SD_CARD_ERROR,              // 读写SD卡出错
     EVT_IMU_FAULT,                  // IMU通信错误
-    EVT_RC_LOST                     // 遥控信号丢失
+    EVT_RC_LOST,                    // 遥控信号丢失
 } IndicatorEvent_t;
 
 typedef enum
@@ -73,10 +79,11 @@ typedef enum
 typedef enum
 {
     SENSOR_OK = 0,
-    SENSOR_FAIL
+    SENSOR_FAIL,
 } SensorStatus_t;
 
 extern volatile ImuHealthStatus_t g_imu_health;
 extern volatile SystemHeartbeat_t g_heartbeat;
+extern volatile ArmState_t g_arm_state;
 
 #endif

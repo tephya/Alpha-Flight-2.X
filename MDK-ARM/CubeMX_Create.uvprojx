@@ -508,6 +508,11 @@
               <FileType>1</FileType>
               <FilePath>..\App\Src\alg_mixer.c</FilePath>
             </File>
+            <File>
+              <FileName>app_arm.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\app_arm.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
