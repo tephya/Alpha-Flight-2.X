@@ -158,7 +158,8 @@ void App_FlightCtrl_Task(void *argument)
 
             fc.roll_meas = attitude.roll * 57.29578f;
             fc.pitch_meas = attitude.pitch * 57.29578f;
-
+            
+            // 获取Mag数据
             MagData_t mag;
             if(osMessageQueueGet(MagDataMailboxHandle, &mag, NULL, 0) == osOK)
             {
@@ -166,6 +167,7 @@ void App_FlightCtrl_Task(void *argument)
                 fc.yaw_meas = attitude.yaw * 57.29578f;
             }
 
+            // 获取RC数据
             osMessageQueueGet(RCChannelMailboxHandle, &s_rc_last, NULL, 0);
 
             FlightControl_Update(dt, active_data.gx, active_data.gy, active_data.gz);
