@@ -10,3 +10,4 @@ volatile ImuHealthStatus_t g_imu_health = {
 };
 
 volatile SystemHeartbeat_t g_heartbeat = {0};
+volatile PowerHealth_t g_power_health = {0};

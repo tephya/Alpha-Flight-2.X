@@ -513,6 +513,11 @@
               <FileType>1</FileType>
               <FilePath>..\App\Src\app_arm.c</FilePath>
             </File>
+            <File>
+              <FileName>bsp_power.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\bsp_power.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

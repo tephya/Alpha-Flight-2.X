@@ -2,6 +2,9 @@
 #include "cmsis_os2.h"
 #include <math.h>
 #include <stdbool.h>
+#include "cmsis_os2.h"
+
+extern osEventFlagsId_t SystemReadyEventGroupHandle;
 
 #define ARM_RC_CHANNEL_SWITCH 4
 #define ARM_RC_CHANNEL_THROTTLE 2
@@ -56,7 +59,12 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
     {
         s_disarmed_hold_active = false;     // Disarmed期间不需要计时
 
-        if(g_imu_health.dual_fault)
+        if (osEventFlagsGet(SystemReadyEventGroupHandle) != SYSREADY_ARM_MASK)
+        {
+            return;         // 系统未就绪(GPS/MAG/VBAT/RC_rssi/IMU_health任一未达标)，禁止解锁
+        }
+
+        if(g_imu_health.dual_fault || g_power_health.voltage_fault)
         {
             return;         // 双路IMU失效，数据不可信，禁止解锁
         }
@@ -75,9 +83,12 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
         return;             // 立即disarm，不走下面的6sdebounce
     }
 
-    /**
-     * TODO: 倾角异常/低压紧急disarm占位
-     */
+    if(g_imu_health.dual_fault || g_power_health.voltage_fault)
+    {
+        g_arm_state = ARM_STATE_DISARMED;
+        s_disarmed_hold_active = false;
+        return;
+    }
 
     if(!Arm_SwitchOn(rc) && Arm_ThrottleLow(rc))
     {

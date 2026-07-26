@@ -10,7 +10,7 @@ extern osMessageQueueId_t NavStateMailboxHandle;
 extern osMessageQueueId_t MagDataMailboxHandle;
 extern osMessageQueueId_t NavCommandQueueHandle;
 
-#define TASK_NAV_PERIOD_MS 20
+#define TASK_NAV_PERIOD_MS 20U
 
 static uint8_t s_home_valid = 0;        // 缓存值，只在处理NAV_CMD_SET_HOME时更新
 

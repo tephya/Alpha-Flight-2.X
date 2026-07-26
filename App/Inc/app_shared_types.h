@@ -1,7 +1,8 @@
 #ifndef __APP_SHARED_TYPES_H
 #define __APP_SHARED_TYPES_H
 
-#include "stm32f4xx_hal.h"
+#include <stdint.h>
+#include <stdbool.h>
 
 // SystemReadyEventGroup bit定义，ARM解锁前必须全部置位
 #define SYSREADY_BIT_HOME_VALID (1 << 0) // Task_Nav置位
@@ -49,8 +50,15 @@ typedef struct
 typedef struct
 {
     volatile uint32_t flightctrl_last_tick;
+    volatile uint32_t powermonit_last_tick;
     // res task
 } SystemHeartbeat_t;
+
+typedef struct
+{
+    bool voltage_fault;     // true=持续低压已确定，供Arm_Update做紧急disarm判据
+} PowerHealth_t;
+
 
 typedef enum
 {
@@ -85,5 +93,6 @@ typedef enum
 extern volatile ImuHealthStatus_t g_imu_health;
 extern volatile SystemHeartbeat_t g_heartbeat;
 extern volatile ArmState_t g_arm_state;
+extern volatile PowerHealth_t g_power_health;
 
 #endif

@@ -29,6 +29,9 @@
 #include "app_shared_types.h"
 #include "app_nav.h"
 #include "app_flightctrl.h"
+#include "app_power_monitor.h"
+#include "app_rc_link.h"
+#include "app_iwdg_feed.h"
 #include "bsp_qmc5883.h"
 #include "bsp_elrs.h"
 /* USER CODE END Includes */
@@ -302,10 +305,7 @@ void StartTask_RC_LINK(void *argument)
 {
   /* USER CODE BEGIN StartTask_RC_LINK */
   /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  App_RcLink_Task(argument);
   /* USER CODE END StartTask_RC_LINK */
 }
 
@@ -371,10 +371,7 @@ void StartTask_PowerMonitor(void *argument)
 {
   /* USER CODE BEGIN StartTask_PowerMonitor */
   /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  App_PowerMonit_Task(argument);
   /* USER CODE END StartTask_PowerMonitor */
 }
 
@@ -407,10 +404,7 @@ void StartTask_IWDG(void *argument)
 {
   /* USER CODE BEGIN StartTask_IWDG */
   /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  App_IwdgFeed_Task(argument);
   /* USER CODE END StartTask_IWDG */
 }
 

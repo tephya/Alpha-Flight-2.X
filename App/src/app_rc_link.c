@@ -13,7 +13,7 @@ extern osMessageQueueId_t RCChannelMailboxHandle;
  */
 #define TASK_RC_LINK_PERIOD_MS 4U
 
-    void App_RcLink_Task(void *argument)
+void App_RcLink_Task(void *argument)
 {
     (void)argument;
 
