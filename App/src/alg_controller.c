@@ -92,12 +92,12 @@ float YawHeadingHold_Update(PID_t *pid_yaw,
 /*========== 遥控通道映射 =========*/
 float Map_Roll(uint16_t ch)
 {
-    return (ch - 991.5f) / 819.5f * 20.0f;
+    return (ch - 991.5f) / 819.5f * 30.0f;
 }
 
 float Map_Pitch(uint16_t ch)
 {
-    return (ch - 991.5f) / 819.5f * 20.0f;
+    return (ch - 991.5f) / 819.5f * 30.0f;
 }
 
 float Map_Yaw(uint16_t ch)
