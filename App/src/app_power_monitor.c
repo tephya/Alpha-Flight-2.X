@@ -42,7 +42,7 @@ void App_PowerMonit_Task(void *argument)
             if(pwr.vbat >= VBAT_RECOVER_THRESHOLD)
             {
                 g_power_health.voltage_fault = false;
-                osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_VOLTAGE_OK);
+                osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_VOLTAGE_OK);
             }
         }
 

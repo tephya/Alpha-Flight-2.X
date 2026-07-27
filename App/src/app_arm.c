@@ -64,23 +64,11 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
             return;         // 系统未就绪(GPS/MAG/VBAT/RC_rssi/IMU_health任一未达标)，禁止解锁
         }
 
-        if(g_imu_health.dual_fault || g_power_health.voltage_fault)
-        {
-            return;         // 双路IMU失效，数据不可信，禁止解锁
-        }
-
         if(Arm_SwitchOn(rc) && Arm_ThrottleLow(rc) && Arm_TiltOk(roll_meas, pitch_meas))
         {
             g_arm_state = ARM_STATE_ARMED;
         }
         return;
-    }
-
-    if(g_imu_health.dual_fault)
-    {
-        g_arm_state = ARM_STATE_DISARMED;
-        s_disarmed_hold_active = false;
-        return;             // 立即disarm，不走下面的6sdebounce
     }
 
     if(g_imu_health.dual_fault || g_power_health.voltage_fault)
