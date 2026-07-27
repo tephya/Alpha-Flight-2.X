@@ -1,10 +1,12 @@
 #include "app_rc_link.h"
+#include "app_shared_types.h"
 #include "bsp_elrs.h"
 #include "cmsis_os2.h"
 #include "FreeRTOS.h"
 #include "queue.h"
 
 extern osMessageQueueId_t RCChannelMailboxHandle;
+extern osMessageQueueId_t SystemReadyEventGroupHandle;
 
 /**
  * EdgeTx Packet Rate = 150Hz, 周期≈6.63ms；
@@ -33,7 +35,12 @@ void App_RcLink_Task(void *argument)
         }
         osMessageQueuePut(RCChannelMailboxHandle, &rc, 0, 0);
 
-        // TODO: RC_LINK_OK这个EventGroup bit在这里根据rc.link_ok置位/清位
+        // 检测RC_LINK_OK_BIT
+        if(rc.link_ok)
+            osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_RC_LINK_OK);
+        else
+            osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_RC_LINK_OK);
+
         osDelay(TASK_RC_LINK_PERIOD_MS);
     }
 }

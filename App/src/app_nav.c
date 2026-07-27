@@ -9,6 +9,7 @@
 extern osMessageQueueId_t NavStateMailboxHandle;
 extern osMessageQueueId_t MagDataMailboxHandle;
 extern osMessageQueueId_t NavCommandQueueHandle;
+extern osMessageQueueId_t SystemReadyEventGroupHandle;
 
 #define TASK_NAV_PERIOD_MS 20U
 
@@ -60,6 +61,12 @@ void App_Nav_Task(void *argument)
             s_home_valid = GPS_SetHome() ? 1 : 0;
         }
 
+        // 检测HOME_OK_BIT
+        if(s_home_valid)
+            osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_HOME_VALID);
+        else
+            osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_HOME_VALID);
+
         GPS_Poll();     // 消费DMA缓冲区，解析NMEA
 
         NavState_t nav;
@@ -74,6 +81,13 @@ void App_Nav_Task(void *argument)
         MagData_t mag;
         QMC_ReadData(); // I2C1读磁力计，内部完成Raw2Gauss
         QMC_CopyTo(&mag);
+
+        // 检测MAG_OK_BIT
+        bool mag_ok = !mag.ovfl;
+        if(mag_ok)
+            osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_MAG_OK);
+        else
+            osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_MAG_OK);
 
         if (osMessageQueueGetSpace(MagDataMailboxHandle) == 0)
         {

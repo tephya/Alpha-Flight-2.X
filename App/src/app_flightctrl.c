@@ -18,6 +18,7 @@
 
 extern osMessageQueueId_t MagDataMailboxHandle;
 extern osMessageQueueId_t RCChannelMailboxHandle;
+extern osMessageQueueId_t SystemReadyEventGroupHandle;
 
 static PID_t pid_yaw;
 
@@ -155,6 +156,13 @@ void App_FlightCtrl_Task(void *argument)
     {
         bool ok = ImuRedundancy_Update(&active_data, &dt);
         g_heartbeat.flightctrl_last_tick = osKernelGetTickCount();
+
+        // 检测IMU_OK_BIT
+        if(g_imu_health.dual_fault)
+            osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_IMU_HEALTH_OK);
+        else
+            osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_IMU_HEALTH_OK);
+
         if (ok)
         {
             Attitude_ComputeAccelAngles(&active_data, &attitude);

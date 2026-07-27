@@ -1,5 +1,6 @@
 #include "bsp_qmc5883.h"
 
+
 #define IIC_CHECK(x) do{                \
             HAL_StatusTypeDef _s = (x); \
             if(_s != HAL_OK)            \
@@ -8,11 +9,14 @@
 
 #define QMC_SENSITIVITY (1.0f / 3750.0f)
 #define QMC_ADDR 0x2C
+#define QMC_REG_STATUS 0x09
+#define QMC_STATUS_OVFL 0x02
 
 typedef struct
 {
     int16_t rmx, rmy, rmz;
     float MX, MY, MZ;
+    bool ovfl; // true=任一一轴数据溢出(超过±30000 LSB)，本次数据不可信
 } MAG_Data_t;
 
 static MAG_Data_t mag_data;
@@ -26,8 +30,8 @@ HAL_StatusTypeDef QMC_Init(void)
     HAL_Delay(1); // POR Complication Time --max 250us
 
     IIC_CHECK(IIC_WriteReg(QMC_ADDR, 0x29, 0x06));
-    IIC_CHECK(IIC_WriteReg(QMC_ADDR, 0x0B, 0x08));
-    IIC_CHECK(IIC_WriteReg(QMC_ADDR, 0x0A, 0xC7)); // OSR2: 8; OSR1: 8; ODR: 50Hz; Continuous Mode
+    IIC_CHECK(IIC_WriteReg(QMC_ADDR, 0x0B, 0x08));  // ±8g
+    IIC_CHECK(IIC_WriteReg(QMC_ADDR, 0x0A, 0xC7));  // OSR2: 8; OSR1: 8; ODR: 50Hz; Continuous Mode
 
     return HAL_OK;
 }
@@ -48,7 +52,12 @@ static void QMC_Raw2Gauss(void)
  */
 HAL_StatusTypeDef QMC_ReadData(void)
 {
+    uint8_t status = 0;
     uint8_t buf[6] = {0};
+
+    // 先读状态寄存器拿OVFL，读取会自动清位，所以这次读到的就是“上一帧结果”
+    IIC_CHECK(IIC_ReadReg(QMC_ADDR, QMC_REG_STATUS, &status));
+    mag_data.ovfl = (status & QMC_STATUS_OVFL) != 0;
 
     IIC_CHECK(IIC_ReadBurst(QMC_ADDR, 0x01, buf, 6));
 
@@ -70,4 +79,5 @@ void QMC_CopyTo(MagData_t *out)
     out->MX = mag_data.MX;
     out->MY = mag_data.MY;
     out->MZ = mag_data.MZ;
+    out->ovfl = mag_data.ovfl;
 }
