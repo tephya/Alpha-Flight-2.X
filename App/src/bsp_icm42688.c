@@ -46,6 +46,12 @@ static const IcmHw_t s_icmHw[ICM_INSTANCE_MAX] =
 
 static IcmData_t s_icmData[ICM_INSTANCE_MAX];       // 内部static缓冲
 
+volatile uint32_t g_icm1_isr_count = 0;
+volatile uint32_t g_icm2_isr_count = 0;
+//volatile HAL_StatusTypeDef g_icm1_last_ret = HAL_OK;
+//volatile uint32_t g_icm1_trigger_call_count = 0;    // 新增：实际被调用次数
+//volatile uint32_t g_icm1_idr_after_read = 0;         // 新增：这次读取完成后的IDR快照
+
 /**
  * @brief   向指定ICM实体读指定地址的内容
  * @param   inst    指向的实体编号
@@ -125,11 +131,13 @@ static bool ICM_InitOne(IcmInstance_t inst)
  */
 static void ICM_ClearDataReadyLatch(IcmInstance_t inst)
 {
+//	(void)ICM_ReadReg(inst, 0x0B);
+
     uint8_t tx[13] = {REG_ACC_XH | 0x80, 0};
     uint8_t rx[13] = {0};
 
     HAL_GPIO_WritePin(s_icmHw[inst].cs_port, s_icmHw[inst].cs_pin, GPIO_PIN_RESET);
-    HAL_SPI_TransmitReceive(s_icmHw[inst].hspi, tx, rx, 2, 10);
+    HAL_SPI_TransmitReceive(s_icmHw[inst].hspi, tx, rx, 13, 10);
     HAL_GPIO_WritePin(s_icmHw[inst].cs_port, s_icmHw[inst].cs_pin, GPIO_PIN_SET);
 }
 
@@ -148,7 +156,7 @@ uint8_t ICM_InitAll(void)
 
     HAL_GPIO_WritePin(s_icmHw[ICM_INSTANCE_1].cs_port, s_icmHw[ICM_INSTANCE_1].cs_pin, GPIO_PIN_SET);
     HAL_GPIO_WritePin(s_icmHw[ICM_INSTANCE_2].cs_port, s_icmHw[ICM_INSTANCE_2].cs_pin, GPIO_PIN_SET);
-
+	
     if(!ICM_InitOne(ICM_INSTANCE_1))
         fail_mask |= (1U << 0);
     if(!ICM_InitOne(ICM_INSTANCE_2))
@@ -159,8 +167,25 @@ uint8_t ICM_InitAll(void)
      * 第一次中断永远不会发生。而读取数据寄存器这个动作本身会清除锁存，
      * 所以这里手动强制读一次，只是借“读”这个动作的硬副作用把两颗IMU的INT1都先拉回低电平，
      * 让后续EXTI能从这里开始正常检测到每一次真正的Rising Edge*/
+	
     ICM_ClearDataReadyLatch(ICM_INSTANCE_1);
-    ICM_ClearDataReadyLatch(ICM_INSTANCE_2);
+	ICM_ClearDataReadyLatch(ICM_INSTANCE_2);
+	
+//	static uint8_t s_stat_before[20];
+//	static uint8_t s_stat_after[20];
+//	static uint32_t s_idr_before[20];
+//	static uint32_t s_idr_after[20];
+//	for (int i = 0; i < 20; i++)
+//	{
+//		s_stat_before[i] = ICM_ReadReg(ICM_INSTANCE_1, 0x0B);
+//		s_idr_before[i] = GPIOA->IDR;                       // 读之前的引脚电平
+
+//		ICM_ClearDataReadyLatch(ICM_INSTANCE_1);
+
+//		s_stat_after[i] = ICM_ReadReg(ICM_INSTANCE_1, 0x0B);
+//		s_idr_after[i] = GPIOA->IDR;                         // 清完立刻看引脚电平
+//		osDelay(2);
+//	}
 
     return fail_mask;
 }
@@ -175,6 +200,9 @@ uint8_t ICM_InitAll(void)
  */
 void ICM_OnDataReady_ISR(IcmInstance_t inst)
 {
+	if (inst == ICM_INSTANCE_1) g_icm1_isr_count++;
+    else g_icm2_isr_count++;
+
     uint32_t flag = (inst == ICM_INSTANCE_1) ? ICM1_DRDY_FLAG : ICM2_DRDY_FLAG;
     osEventFlagsSet(g_icmDataReadyEvtId, flag);
 }
@@ -191,7 +219,12 @@ void ICM_TriggerRead(IcmInstance_t inst)
     HAL_GPIO_WritePin(s_icmHw[inst].cs_port, s_icmHw[inst].cs_pin, GPIO_PIN_RESET);
     HAL_StatusTypeDef ret = HAL_SPI_TransmitReceive(s_icmHw[inst].hspi, tx, rx, 13, 10);
     HAL_GPIO_WritePin(s_icmHw[inst].cs_port, s_icmHw[inst].cs_pin, GPIO_PIN_SET);
-	
+//	if (inst == ICM_INSTANCE_1) 
+//	{
+//		g_icm1_last_ret = ret;
+//		g_icm1_trigger_call_count++;           
+//        g_icm1_idr_after_read = GPIOA->IDR;     // CS拉高之后立刻看引脚
+//	}	
 	if (ret != HAL_OK)
 	{
 		return;   // 传输失败，直接放弃这次转换，保留上一次的旧数据，不要用垃圾值覆盖

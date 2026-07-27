@@ -1,7 +1,6 @@
 #include "app_arm.h"
 #include "cmsis_os2.h"
 #include <math.h>
-#include <stdbool.h>
 #include "cmsis_os2.h"
 
 extern osEventFlagsId_t SystemReadyEventGroupHandle;
@@ -12,6 +11,8 @@ extern osEventFlagsId_t SystemReadyEventGroupHandle;
 #define ARM_THROTTLE_LOW_MAX 180
 #define ARM_TILT_LIMIT_DEG 30.0f
 #define ARM_DISARM_HOLD_MS 6000U
+
+#define TILT_PROTECTION_LIMIT_DEG 60.0f
 
 volatile ArmState_t g_arm_state = ARM_STATE_DISARMED;
 
@@ -71,7 +72,8 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
         return;
     }
 
-    if(g_imu_health.dual_fault || g_power_health.voltage_fault)
+    if(g_imu_health.dual_fault || g_power_health.voltage_fault ||
+        !TiltProtection_Check(roll_meas, pitch_meas))
     {
         g_arm_state = ARM_STATE_DISARMED;
         s_disarmed_hold_active = false;
@@ -94,4 +96,10 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
     else{
         s_disarmed_hold_active = false;         // 条件中断，计时重来
     }
+}
+
+bool TiltProtection_Check(float roll_meas, float pitch_meas)
+{
+    return (fabsf(roll_meas) < TILT_PROTECTION_LIMIT_DEG &&
+            fabsf(pitch_meas) < TILT_PROTECTION_LIMIT_DEG);
 }

@@ -16,6 +16,9 @@
 #include "queue.h"
 #include <math.h>
 
+#include "usart.h"
+#include <stdio.h>
+
 extern osMessageQueueId_t MagDataMailboxHandle;
 extern osMessageQueueId_t RCChannelMailboxHandle;
 extern osMessageQueueId_t SystemReadyEventGroupHandle;
@@ -141,7 +144,9 @@ void App_FlightCtrl_Task(void *argument)
      * fail_mask非0说明某颗IMU的WHO_AM_I校验没过，SPI通信有问题，
      * 测试阶段先不处理这个返回值，实际飞控代码需要在这里加错误处理/指示灯报警 */
     uint8_t fail_mask = ICM_InitAll();
-    (void)fail_mask; /* TODO: 测试阶段暂不处理，后续需要在这里对接故障指示 */
+	// char buf[32];
+	// int len = snprintf(buf, sizeof(buf), "fail_mask=0x%02X\r\n", fail_mask);
+	// HAL_UART_Transmit(&huart3, (uint8_t *)buf, (uint16_t)len, 10);
 
     ImuRedundancy_Init();
     FlightControl_Init();
@@ -151,7 +156,8 @@ void App_FlightCtrl_Task(void *argument)
     IcmData_t active_data;
     float dt;
     uint16_t m1, m2, m3, m4;
-
+	
+//	osEventFlagsClear(g_icmDataReadyEvtId, ICM1_DRDY_FLAG | ICM2_DRDY_FLAG);
     for (;;)
     {
         bool ok = ImuRedundancy_Update(&active_data, &dt);

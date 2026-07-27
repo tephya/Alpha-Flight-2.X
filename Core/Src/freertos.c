@@ -287,7 +287,7 @@ void StartTask_FlightControl(void *argument)
 {
   /* USER CODE BEGIN StartTask_FlightControl */
   /* Infinite loop */
-  for(;;)
+  for (;;)
   {
     App_FlightCtrl_Task(argument);
   }
@@ -305,7 +305,11 @@ void StartTask_RC_LINK(void *argument)
 {
   /* USER CODE BEGIN StartTask_RC_LINK */
   /* Infinite loop */
-  App_RcLink_Task(argument);
+  // App_RcLink_Task(argument);
+  for (;;)
+  {
+    osDelay(1);
+  }
   /* USER CODE END StartTask_RC_LINK */
 }
 
@@ -320,7 +324,11 @@ void StartTask_Nav(void *argument)
 {
   /* USER CODE BEGIN StartTask_Nav */
   /* Infinite loop */
-  App_Nav_Task(argument);
+  // App_Nav_Task(argument);
+  for (;;)
+  {
+    osDelay(1);
+  }
   /* USER CODE END StartTask_Nav */
 }
 
@@ -371,7 +379,11 @@ void StartTask_PowerMonitor(void *argument)
 {
   /* USER CODE BEGIN StartTask_PowerMonitor */
   /* Infinite loop */
-  App_PowerMonit_Task(argument);
+  // App_PowerMonit_Task(argument);
+  for (;;)
+  {
+    osDelay(1);
+  }
   /* USER CODE END StartTask_PowerMonitor */
 }
 
@@ -404,7 +416,10 @@ void StartTask_IWDG(void *argument)
 {
   /* USER CODE BEGIN StartTask_IWDG */
   /* Infinite loop */
-  App_IwdgFeed_Task(argument);
+  for (;;)
+  {
+    App_IwdgFeed_Task(argument);
+  }
   /* USER CODE END StartTask_IWDG */
 }
 
@@ -412,7 +427,10 @@ void StartTask_IWDG(void *argument)
 void RC_FailsafeTimeout_Callback(void *argument)
 {
   /* USER CODE BEGIN RC_FailsafeTimeout_Callback */
-
+  for (;;)
+  {
+    osDelay(1);
+  }
   /* USER CODE END RC_FailsafeTimeout_Callback */
 }
 

@@ -3,8 +3,10 @@
 
 #include "app_shared_types.h"
 #include "bsp_elrs.h"
+#include <stdbool.h>
 
 void Arm_Init(void);
 void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas);
+bool TiltProtection_Check(float roll_meas, float pitch_meas);
 
 #endif

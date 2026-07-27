@@ -113,16 +113,16 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
 
 /* USER CODE BEGIN 1 */
 /**
- * @brief   写�?�个寄存器
- * @param   dev_addr  7�?从机地�?�
- * @param   reg_addr  寄存器地�?�
- * @param   data      待写入数�?�
- * @retval  HAL_OK=�?功，其余为HAL错误�?
+ * @brief   写指定寄存器
+ * @param   dev_addr  7位从机地址
+ * @param   reg_addr  寄存器地址
+ * @param   data      待写入数据
+ * @retval  HAL_OK=成功，其余为HAL错误码
  */
 HAL_StatusTypeDef IIC_WriteReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t data)
 {
   return HAL_I2C_Mem_Write(&hi2c1,
-                          (uint16_t)(dev_addr << 1),      // 7�?地�?�左移1�?拼�?8�?地�?�
+                          (uint16_t)(dev_addr << 1),      // 7�?地�?�左移1�?拼�?8�?地�?�
                           reg_addr,
                           I2C_MEMADD_SIZE_8BIT,
                           &data,
@@ -132,11 +132,11 @@ HAL_StatusTypeDef IIC_WriteReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t data)
 
 
 /**
- * @brief   读�?�个寄存器
- * @param   dev_addr  7�?从机地�?�
- * @param   reg_addr  寄存器地�?�
- * @param   data      读�?�结果输出指针
- * @retval  HAL_OK=�?功，其余为HAL错误�?
+ * @brief   读指定寄存器
+ * @param   dev_addr  7位从机地址
+ * @param   reg_addr  寄存器地址
+ * @param   data      读寄存器结果输出指针
+ * @retval  HAL_OK=成功，其余为HAL错误码
  */
 HAL_StatusTypeDef IIC_ReadReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data)
 {
@@ -152,11 +152,11 @@ HAL_StatusTypeDef IIC_ReadReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data)
 
 /**
  * @brief   从指定寄存器开始连续读多个字节
- * @param   dev_addr  7�?从机地�?�
- * @param   reg_addr  起始寄存器地�?�
+ * @param   dev_addr  7位从机地地址
+ * @param   reg_addr  起始寄存器地址
  * @param   buf       接收缓冲区
- * @param   len       读�?�字节数
- * @retval  HAL_OK=�?功，其余为HAL错误�?
+ * @param   len       读收字节数
+ * @retval  HAL_OK=写成功，其余为HAL错误码
  */
 HAL_StatusTypeDef IIC_ReadBurst(uint8_t dev_addr, uint8_t reg_addr, uint8_t *buf, uint16_t len)
 {
