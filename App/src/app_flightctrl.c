@@ -7,6 +7,7 @@
 #include "bsp_dshot.h"
 #include "bsp_qmc5883.h"
 #include "bsp_icm42688.h"
+#include "bsp_blackbox.h"
 #include "alg_attitude.h"
 #include "alg_controller.h"
 #include "alg_pid.h"
@@ -200,6 +201,20 @@ void App_FlightCtrl_Task(void *argument)
             {
                 BSP_DSHOT_Send(0, 0, 0, 0);
             }
+
+            uint16_t time_ms = (uint16_t)osKernelGetTickCount();
+            uint16_t angle_cdeg[3] = {
+                (int16_t)(fc.roll_meas * 100.0f),
+                (int16_t)(fc.pitch_meas * 100.0f),
+                (int16_t)(fc.yaw_meas * 100.0f)};
+
+            uint16_t motor[4] = {m1, m2, m3, m4};
+            int8_t target_cdeg[3] = {
+                (int8_t)fc.roll_target,
+                (int8_t)fc.pitch_target,
+                (int8_t)fc.yaw_target};
+
+            BB_LogMotion(time_ms, angle_cdeg, motor, target_cdeg);
         }
 
         /* 测试阶段：循环体到这里结束，下一轮由osEventFlagsWait本身阻塞节流，

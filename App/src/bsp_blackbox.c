@@ -8,35 +8,39 @@
 
 #define LOG_BUF_SIZE 512U
 
-/*====== 各记录类型的实际大小(含1字节type + 内容), __packed保证紧凑 ======*/
+/*====== 各记录类型的实际大小(含MAGIC + type + 内容), __packed保证紧凑 ======*/
 typedef __packed struct
 {
+    uint8_t magic;      // BB_FRAME_MAGIC，帧同步用
     uint8_t type;       // BB_REC_MOTION
     uint16_t time_ms;
     int16_t angle_cdeg[3];  // roll/pitch/yaw，0.01°定点
     uint16_t motor[4];
     int8_t target_cdeg[3];
-} BB_MotionRec_t;       // total = 20Bytes
+} BB_MotionRec_t;       // total = 21Bytes
 
 typedef __packed struct
 {
+    uint8_t magic;
     uint8_t type;
     uint16_t time_ms;
     uint8_t armed;
-} BB_ArmChangedRec_t;   // total = 4Bytes
+} BB_ArmChangedRec_t;   // total = 5Bytes
 
 typedef __packed struct
 {
+    uint8_t magic;
     uint8_t type;
     uint16_t time_ms;
-} BB_FaultRec_t;        // total = 3Bytes, DualFault/VoltageFault共用
+} BB_FaultRec_t;        // total = 4Bytes, DualFault/VoltageFault共用
 
 typedef __packed struct
 {
+    uint8_t magic;
     uint8_t type;
     uint16_t time_ms;
     uint8_t new_active_imu;
-} BB_ImuSwitchRec_t;    // total = 4Bytes
+} BB_ImuSwitchRec_t;    // total = 5Bytes
 
 /*====== 双缓冲消费状态(内部私有) ======*/
 typedef enum
@@ -169,6 +173,7 @@ int8_t BB_LogMotion(uint16_t time_ms, const int16_t angle_cdeg[3],
                     const uint16_t motor[4], const int8_t target_cdeg[3])
 {
     BB_MotionRec_t rec;
+    rec.magic = BB_FRAME_MAGIC;
     rec.type = BB_REC_MOTION;
     rec.time_ms = time_ms;
     memcpy((void*)rec.angle_cdeg, angle_cdeg, sizeof(rec.angle_cdeg));
@@ -179,25 +184,25 @@ int8_t BB_LogMotion(uint16_t time_ms, const int16_t angle_cdeg[3],
 
 int8_t BB_LogArmChanged(uint16_t time_ms, uint8_t armed)
 {
-    BB_ArmChangedRec_t rec = {BB_REC_ARM_CHANGED, time_ms, armed};
+    BB_ArmChangedRec_t rec = {BB_FRAME_MAGIC, BB_REC_ARM_CHANGED, time_ms, armed};
     return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));
 }
 
 int8_t BB_LogDualFault(uint16_t time_ms)
 {
-    BB_FaultRec_t rec = {BB_REC_DUAL_FAULT, time_ms};
+    BB_FaultRec_t rec = {BB_FRAME_MAGIC, BB_REC_DUAL_FAULT, time_ms};
     return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));
 }
 
 int8_t BB_LogVoltageFault(uint16_t time_ms)
 {
-    BB_FaultRec_t rec = {BB_REC_VOLTAGE_FAULT, time_ms};
+    BB_FaultRec_t rec = {BB_FRAME_MAGIC, BB_REC_VOLTAGE_FAULT, time_ms};
     return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));
 }
 
 int8_t BB_LogImuSwitch(uint16_t time_ms, uint8_t new_active_imu)
 {
-    BB_ImuSwitchRec_t rec = {BB_REC_IMU_SWITCH, time_ms};
+    BB_ImuSwitchRec_t rec = {BB_FRAME_MAGIC, BB_REC_IMU_SWITCH, time_ms};
     return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));
 }
 

@@ -1,6 +1,7 @@
 #include "app_power_monitor.h"
 #include "app_shared_types.h"
 #include "bsp_power.h"
+#include "bsp_blackbox.h"
 #include "cmsis_os2.h"
 
 #define VBAT_DISARM_THRESHOLD 13.2f     // 4S单片3.3V下限，换电池时改这一处
@@ -31,6 +32,9 @@ void App_PowerMonit_Task(void *argument)
             
             if(low_count > VBAT_FAULT_CONFIRM_COUNT)
             {
+                if (!g_power_health.voltage_fault)          // 跳边沿才记，持续锁存期间不用重复写
+                    BB_LogVoltageFault(osKernelGetTickCount());
+
                 g_power_health.voltage_fault = true;
                 osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_VOLTAGE_OK);
             }

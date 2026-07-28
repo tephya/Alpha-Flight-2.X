@@ -31,6 +31,7 @@
 #include "app_flightctrl.h"
 #include "app_power_monitor.h"
 #include "app_rc_link.h"
+#include "app_blackbox.h"
 #include "app_iwdg_feed.h"
 #include "bsp_qmc5883.h"
 #include "bsp_elrs.h"
@@ -287,10 +288,7 @@ void StartTask_FlightControl(void *argument)
 {
   /* USER CODE BEGIN StartTask_FlightControl */
   /* Infinite loop */
-  for (;;)
-  {
-    App_FlightCtrl_Task(argument);
-  }
+  App_FlightCtrl_Task(argument);
   /* USER CODE END StartTask_FlightControl */
 }
 
@@ -343,10 +341,7 @@ void StartTask_Blackbox(void *argument)
 {
   /* USER CODE BEGIN StartTask_Blackbox */
   /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  App_Blackbox_Task(argument);
   /* USER CODE END StartTask_Blackbox */
 }
 

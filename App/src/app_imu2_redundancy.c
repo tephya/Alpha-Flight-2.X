@@ -1,9 +1,9 @@
 #include "app_imu2_redundancy.h"
-#include "cmsis_os2.h"
 #include "app_shared_types.h"
 #include "bsp_debug_uart.h"
+#include "bsp_blackbox.h"
 #include <math.h>
-
+#include "cmsis_os2.h"
 
 /*====== 切换阈值 ======*/
 #define SWITCH_AWAY_THRESHOLD 5     // 连续5帧异常判定切走
@@ -123,6 +123,7 @@ static void Health_RecordBad(void)
                 g_imu_health.active_imu_sel = 0;
             }
             g_imu_health.dual_fault = 0;
+            BB_LogImuSwitch(osKernelGetTickCount(), g_imu_health.active_imu_sel);
         }
         else
         {
@@ -137,6 +138,9 @@ static void Health_RecordBad(void)
                 g_imu_health.imu1_healthy = 0;
             else
                 g_imu_health.imu2_healthy = 0;
+
+            if(!g_imu_health.dual_fault)            // 跳边沿才记，持续锁存期间不用重复写
+                BB_LogDualFault(osKernelGetTickCount());
 
             g_imu_health.dual_fault = 1;
         }

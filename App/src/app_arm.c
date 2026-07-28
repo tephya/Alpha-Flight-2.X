@@ -1,4 +1,5 @@
 #include "app_arm.h"
+#include "bsp_blackbox.h"
 #include "cmsis_os2.h"
 #include <math.h>
 #include "cmsis_os2.h"
@@ -68,6 +69,7 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
         if(Arm_SwitchOn(rc) && Arm_ThrottleLow(rc) && Arm_TiltOk(roll_meas, pitch_meas))
         {
             g_arm_state = ARM_STATE_ARMED;
+            BB_LogArmChanged(osKernelGetTickCount(), ARM_STATE_ARMED);
         }
         return;
     }
@@ -77,6 +79,7 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
     {
         g_arm_state = ARM_STATE_DISARMED;
         s_disarmed_hold_active = false;
+        BB_LogArmChanged(osKernelGetTickCount(), ARM_STATE_DISARMED);
         return;
     }
 
@@ -91,6 +94,7 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
         {
             g_arm_state = ARM_STATE_DISARMED;
             s_disarmed_hold_active = false;
+            BB_LogArmChanged(osKernelGetTickCount(), ARM_STATE_DISARMED);
         }
     }
     else{
