@@ -194,13 +194,13 @@ int8_t BSP_SD_Init(void)
 void BSP_SD_SetSpeed(uint32_t prescaler)
 {
     __HAL_SPI_DISABLE(&hspi2);
-    hspi2.Instance->CR1 = (hspi2.Instance->CR1 & -SPI_CR1_BR) | prescaler;
+    hspi2.Instance->CR1 = (hspi2.Instance->CR1 & ~SPI_CR1_BR) | prescaler;
     __HAL_SPI_ENABLE(&hspi2);
 }
 
 /**
  * @brief   读取单个512字节Block(全程走DMA)
- * @note    寻址逻辑：SDHC卡block参数直接当Block号；SDSC卡内部转换为字节地址(512*512)。
+ * @note    寻址逻辑：SDHC卡block参数直接当Block号；SDSC卡内部转换为字节地址(Blcok*512)。
  *          时序：CMD17取R1 ->
  *               轮询等待Data Token(0xFE) ->
  *               DMA收512字节 ->

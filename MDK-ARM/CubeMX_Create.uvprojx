@@ -394,6 +394,16 @@
               <FilePath>..\App\src\alg_navigation.c</FilePath>
             </File>
             <File>
+              <FileName>alg_mixer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\alg_mixer.c</FilePath>
+            </File>
+            <File>
+              <FileName>alg_controller.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\alg_controller.c</FilePath>
+            </File>
+            <File>
               <FileName>alg_pid.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\src\alg_pid.c</FilePath>
@@ -437,6 +447,16 @@
               <FileName>app_rc_link.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\src\app_rc_link.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_shared_types.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\app_shared_types.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_arm.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\app_arm.c</FilePath>
             </File>
             <File>
               <FileName>bsp_adc.c</FileName>
@@ -494,29 +514,14 @@
               <FilePath>..\App\Src\bsp_gpio_dispatch.c</FilePath>
             </File>
             <File>
-              <FileName>app_shared_types.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\App\Src\app_shared_types.c</FilePath>
-            </File>
-            <File>
-              <FileName>alg_controller.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\App\Src\alg_controller.c</FilePath>
-            </File>
-            <File>
-              <FileName>alg_mixer.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\App\Src\alg_mixer.c</FilePath>
-            </File>
-            <File>
-              <FileName>app_arm.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\App\Src\app_arm.c</FilePath>
-            </File>
-            <File>
               <FileName>bsp_power.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\Src\bsp_power.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_blackbox.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\bsp_blackbox.c</FilePath>
             </File>
           </Files>
         </Group>
