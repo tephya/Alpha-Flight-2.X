@@ -63,6 +63,7 @@ static FIL s_fil;
 static BB_Buffer_t s_buf[2];        // 创建双缓冲区
 static uint8_t s_fillIndex = 0;
 static osSemaphoreId_t s_dataReadySem = NULL;
+static osEventFlagsId_t s_ctrlEvt = NULL;
 
 static volatile uint8_t s_overflowFlag = 0;
 static volatile uint8_t s_writeErrorFlag = 0;
@@ -221,8 +222,10 @@ int8_t BB_WaitReady(uint32_t timeout_ms)
 /**
  * @brief   消费一块READY状态的缓冲区，写入SD卡，更新缓冲区状态
  * @note    由Task_Blackbox在BB_WaitReady返回0后调用
+ * @retval  0 : 本次没有数据要写
+ *          1 : 本次处理了一块缓冲区
  */
-void BB_Process(void)
+int8_t BB_Process(void)
 {
     int8_t index = -1;
     
@@ -231,7 +234,7 @@ void BB_Process(void)
     else if(s_buf[1].state == BB_BUF_READY)
         index = 1;
     else
-        return;
+        return 0;       // 两块都不是READY，本次没有数据要写
 
     UINT bw;
     FRESULT result = f_write(&s_fil, s_buf[index].data, LOG_BUF_SIZE, &bw);
@@ -246,6 +249,8 @@ void BB_Process(void)
         s_writeErrorFlag = 1;
         s_buf[index].state = BB_BUF_FREE;       // 丢弃这一块，避免消费者卡死咋ERROR态无法回收
     }
+
+    return 1;       // 处理了一块，调用方应该再调一次，确认是否还有下一块待处理
 }
 
 /**
@@ -287,4 +292,34 @@ uint8_t BB_GetErrorFlags(void)
     if(s_writeErrorFlag)
         flags |= (1U << 1);
     return flags;
+}
+
+/**
+ * @brief   请求关闭当前日志文件(非阻塞，只置事件位)
+ * @note    由app_arm.c在Armed->Disarmed的所有出口(正常落地/紧急disarm)调用
+ */
+void BB_RequestClose(void)
+{
+    osEventFlagsSet(s_ctrlEvt, BB_CTRL_CLOSE_REQ);
+}
+
+/**
+ * @brief   请求开一个新日志文件(非阻塞，只置事件位)
+ * @note    由app_arm.c在Disarmed->Armed解锁瞬间调用
+ */
+void BB_RequestNewFile(void)
+{
+    osEventFlagsSet(s_ctrlEvt, BB_CTRL_NEWFILE_REQ);
+}
+
+/**
+ * @brief   Task_Blackbox内部轮询控制请求用
+ * @param   timeout_ms  0表示非阻塞立即返回，用于跟BB_WaitReady搭配轮询
+ * @retval  非负值：命中的bit(BB_CTRL_CLOSE_REQ/BB_CTRL_NEWFILE_REQ其一或组合)
+ *          负值(osFlagsErrorTimeout等)：本次没有待处理的请求
+ */
+uint32_t BB_PollControlRequest(uint32_t timeout_ms)
+{
+    return osEventFlagsWait(s_ctrlEvt, BB_CTRL_CLOSE_REQ | BB_CTRL_NEWFILE_REQ,
+                            osFlagsWaitAny, timeout_ms);
 }

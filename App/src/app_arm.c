@@ -70,6 +70,7 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
         {
             g_arm_state = ARM_STATE_ARMED;
             BB_LogArmChanged(osKernelGetTickCount(), ARM_STATE_ARMED);
+            BB_RequestNewFile();    // 每次解锁开一个新日志文件
         }
         return;
     }
@@ -80,6 +81,7 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
         g_arm_state = ARM_STATE_DISARMED;
         s_disarmed_hold_active = false;
         BB_LogArmChanged(osKernelGetTickCount(), ARM_STATE_DISARMED);
+        BB_RequestClose();  // 紧急disarm需要确保数据落盘
         return;
     }
 
@@ -95,6 +97,7 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
             g_arm_state = ARM_STATE_DISARMED;
             s_disarmed_hold_active = false;
             BB_LogArmChanged(osKernelGetTickCount(), ARM_STATE_DISARMED);
+            BB_RequestClose();
         }
     }
     else{

@@ -459,11 +459,6 @@
               <FilePath>..\App\Src\app_arm.c</FilePath>
             </File>
             <File>
-              <FileName>bsp_adc.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\App\src\bsp_adc.c</FilePath>
-            </File>
-            <File>
               <FileName>bsp_buzzer.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\src\bsp_buzzer.c</FilePath>

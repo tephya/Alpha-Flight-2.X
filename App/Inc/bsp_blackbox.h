@@ -33,8 +33,18 @@ int8_t BB_LogVoltageFault(uint16_t time_ms);
 int8_t BB_LogImuSwitch(uint16_t time_ms, uint8_t new_active_imu);
 
 int8_t BB_WaitReady(uint32_t timeout_ms);
-void BB_Process(void);
+int8_t BB_Process(void);
 int8_t BB_Close(void);
 uint8_t BB_GetErrorFlags(void);
+
+/*====== 跨Task控制请求：由Task_FlightCtrl/app_arm.c这类实时任务调用，
+ * 只是非阻塞地置一个事件位，真正执行关闭/开新文件的动作在Task_Blackbox里做，
+ * 不能让ARM状态机直接调用BB_Close/BB_Init这类阻塞式SD卡操作 ====== */
+#define BB_CTRL_CLOSE_REQ (1U << 0) // 请求关闭当前文件，用于ARM->Disarm(含紧急disarm)时
+#define BB_CTRL_NEWFILE_REQ (1U << 1) // 请求开一个新日志文件，用于Disarm->ARM时
+
+void BB_RequestClose(void);
+void BB_RequestNewFile(void);
+uint32_t BB_PollControlRequest(uint32_t timeout_ms);
 
 #endif

@@ -21,10 +21,30 @@ void App_Blackbox_Task(void *argument)
     BB_BufferInit();
 
     for (;;)
-    {
-        if(BB_WaitReady(osWaitForever) == 0)
+    {   
+
+        if(BB_WaitReady(50) == 0)
         {
-            BB_Process();
+            while(BB_Process())
+                ;   // 一次性排空两块缓冲区里的所有READY，不留到下一轮
+        }
+
+        uint32_t ctrl = BB_PollControlRequest(0);   // 非阻塞peek，不影响上面数据处理的节奏
+        if((int32_t)ctrl >= 0)
+        {
+            if(ctrl && BB_CTRL_CLOSE_REQ)
+            {
+                while(BB_Process())
+                    ;       // 关闭前先把剩余READY数据先落盘，再flush尾巴+真正关闭文件
+                BB_Close();
+            }
+        }
+
+        if(ctrl && BB_CTRL_NEWFILE_REQ)
+        {
+            while(BB_Init() != 0)
+                osDelay(500);   // 挂载失败，定期重试而非直接卡死
+            BB_BufferInit();
         }
 
         // TODO: BB_GetErrorFlags()非0时，应该往IndicatorEventQueue发一条EVT_SD_CARD_ERROR

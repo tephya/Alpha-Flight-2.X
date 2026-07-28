@@ -230,7 +230,7 @@ bool ImuRedundancy_Update(IcmData_t *out, float *dt_s)
     ICM_CopyTo(ICM_INSTANCE_1, &d1);
     ICM_CopyTo(ICM_INSTANCE_2, &d2);
 
-    DebugUart_PrintImuDiff(&d1, &d2);
+    // DebugUart_PrintImuDiff(&d1, &d2);
 
     uint32_t now_cycle = DWT->CYCCNT;
     float age1_s = (float)(now_cycle - d1.timestamp_cycle) / (float)SystemCoreClock;
