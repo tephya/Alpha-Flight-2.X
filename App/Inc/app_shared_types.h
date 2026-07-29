@@ -68,15 +68,15 @@ typedef enum
 
 typedef enum
 {
-    EVT_ARMED,                      // 解锁
-    EVT_DISARMED,                   // 未解锁
-    EVT_LOW_BATTERY,                // 低电压(<14.0V)
-    EVT_CRITICAL_BATTERY,           // 超低电压(<13.2V)
-    EVT_GPS_FIX_ACQUIRED,           
-    EVT_SD_CARD_FULL,               
-    EVT_SD_CARD_ERROR,              // 读写SD卡出错
-    EVT_IMU_FAULT,                  // IMU通信错误
-    EVT_RC_LOST,                    // 遥控信号丢失
+    EVT_ARMED = 0,                      // 解锁
+    EVT_DISARMED = 1,                   // 未解锁
+    EVT_LOW_BATTERY = 2,                // 低电压(<14.0V)
+    EVT_CRITICAL_BATTERY = 3,           // 超低电压(<13.2V)
+    EVT_GPS_FIX_ACQUIRED = 4,           
+    EVT_SD_CARD_FULL = 5,               
+    EVT_SD_CARD_ERROR = 6,              // 读写SD卡出错
+    EVT_IMU_FAULT = 7,                  // IMU通信错误
+    EVT_RC_LOST = 8,                    // 遥控信号丢失
 } IndicatorEvent_t;
 
 typedef enum

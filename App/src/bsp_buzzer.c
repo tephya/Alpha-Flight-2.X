@@ -40,7 +40,7 @@ void BSP_Buzzer_Init(void)
 /**
  * @brief   启动蜂鸣器发声(持续输出2.048kHz方波)
  */
-void BSP_Buzzer_Init(void)
+void BSP_Buzzer_On(void)
 {
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
 }
