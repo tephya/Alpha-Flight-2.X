@@ -71,12 +71,12 @@ typedef enum
     EVT_ARMED = 0,                      // 解锁
     EVT_DISARMED = 1,                   // 未解锁
     EVT_LOW_BATTERY = 2,                // 低电压(<14.0V)
-    EVT_CRITICAL_BATTERY = 3,           // 超低电压(<13.2V)
-    EVT_GPS_FIX_ACQUIRED = 4,           
-    EVT_SD_CARD_FULL = 5,               
+    EVT_CRITICAL_BATTERY = 3,           // 超低电压(<13.2V)，持续报警
+    EVT_GPS_FIX_ACQUIRED = 4,           // GPS记录返航点成功
+    EVT_SD_CARD_FULL = 5,               // SD卡可读写空间为0
     EVT_SD_CARD_ERROR = 6,              // 读写SD卡出错
     EVT_IMU_FAULT = 7,                  // IMU通信错误
-    EVT_RC_LOST = 8,                    // 遥控信号丢失
+    EVT_RC_LOST = 8,                    // 遥控信号丢失，持续报警
 } IndicatorEvent_t;
 
 typedef enum

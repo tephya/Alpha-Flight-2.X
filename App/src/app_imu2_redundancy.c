@@ -5,6 +5,8 @@
 #include <math.h>
 #include "cmsis_os2.h"
 
+extern osMessageQueueId_t IndicatorEventQueueHandle;
+
 /*====== 切换阈值 ======*/
 #define SWITCH_AWAY_THRESHOLD 5     // 连续5帧异常判定切走
 #define SWITCH_BACK_THRESHOLD 200   // 连续200帧健康判定切回
@@ -140,7 +142,12 @@ static void Health_RecordBad(void)
                 g_imu_health.imu2_healthy = 0;
 
             if(!g_imu_health.dual_fault)            // 跳边沿才记，持续锁存期间不用重复写
+            {
                 BB_LogDualFault(osKernelGetTickCount());
+
+                IndicatorEvent_t evt = EVT_IMU_FAULT;
+                osMessageQueuePut(IndicatorEventQueueHandle, &evt, 0, 0);
+            }
 
             g_imu_health.dual_fault = 1;
         }
@@ -184,6 +191,26 @@ static void Health_RecordGood(void)
     }
 }
 
+#define IMU_FAULT_REPORT_MS 900U // 持续报警重发间隔，需大于EVT_IMU_FAULT节拍自身播放时长(约660ms)
+
+static void ImuFault_ReportIfActive(void)
+{
+    static bool was_active = false;
+    static uint32_t last_repost_tick = 0;
+
+    bool active = (g_imu_health.dual_fault != 0);
+    if(active)
+    {
+        if (!was_active || (osKernelGetTickCount() - last_repost_tick) >= IMU_FAULT_REPORT_MS)
+        {
+            IndicatorEvent_t evt = EVT_IMU_FAULT;
+            osMessageQueuePut(IndicatorEventQueueHandle, &evt, 0, 0);
+            last_repost_tick = osKernelGetTickCount();
+        }
+    }
+    was_active = active;
+}
+
 /**
  * @brief   初始化IMU冗余处理模块
  */
@@ -214,6 +241,7 @@ bool ImuRedundancy_Update(IcmData_t *out, float *dt_s)
     if((int32_t)evt < 0)    // CMSIS-RTOS2: 负值为错误码，osFlagsErrorTimeout即超时
     {
         Health_RecordBad();     // 两路都没等到，算一次中断型异常，计入统一计数器
+        ImuFault_ReportIfActive();
         *dt_s = DWT_MeasureDt();
         return false;
     }
@@ -249,6 +277,7 @@ bool ImuRedundancy_Update(IcmData_t *out, float *dt_s)
         Health_RecordGood();
     }
 
+    ImuFault_ReportIfActive();
     *out = (g_imu_health.active_imu_sel == 0) ? d1 : d2;
     *dt_s = DWT_MeasureDt();
     return true;

@@ -10,6 +10,7 @@ extern osMessageQueueId_t NavStateMailboxHandle;
 extern osMessageQueueId_t MagDataMailboxHandle;
 extern osMessageQueueId_t NavCommandQueueHandle;
 extern osMessageQueueId_t SystemReadyEventGroupHandle;
+extern osMessageQueueId_t IndicatorEventQueueHandle;
 
 #define TASK_NAV_PERIOD_MS 20U
 
@@ -39,6 +40,8 @@ void App_Nav_Task(void *argument)
 
     for (;;)
     {
+        uint8_t pre_home_valid = s_home_valid;  // 记录本轮循环开始前的值，两处更新点后统一判断跳变
+
         NavCommand_t cmd;
         if(osMessageQueueGet(NavCommandQueueHandle, &cmd, NULL, 0) == osOK){
             switch (cmd)
@@ -52,10 +55,8 @@ void App_Nav_Task(void *argument)
             }
         }
 
-        /**
-         * 开机后持续自动重试，直到成功为止，维持旧架构“上电即自动搜星”的语义；
-         * 一旦成功就不再重试，除非以后有外部命令显式触发
-         */
+        /* 开机后持续自动重试，直到成功为止，维持旧架构“上电即自动搜星”的语义；
+         * 一旦成功就不再重试，除非以后有外部命令显式触发 */
         if(!s_home_valid)
         {
             s_home_valid = GPS_SetHome() ? 1 : 0;
@@ -66,6 +67,13 @@ void App_Nav_Task(void *argument)
             osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_HOME_VALID);
         else
             osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_HOME_VALID);
+
+        // 只在0->1跳变沿发一次
+        if(!pre_home_valid && s_home_valid)
+        {
+            IndicatorEvent_t evt = EVT_GPS_FIX_ACQUIRED;
+            osMessageQueuePut(IndicatorEventQueueHandle, &evt, 0, 0);
+        }
 
         GPS_Poll();     // 消费DMA缓冲区，解析NMEA
 

@@ -5,6 +5,7 @@
 #include "cmsis_os2.h"
 
 extern osEventFlagsId_t SystemReadyEventGroupHandle;
+extern osMessageQueueId_t IndicatorEventQueueHandle;
 
 #define ARM_RC_CHANNEL_SWITCH 4
 #define ARM_RC_CHANNEL_THROTTLE 2
@@ -71,6 +72,9 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
             g_arm_state = ARM_STATE_ARMED;
             BB_LogArmChanged(osKernelGetTickCount(), ARM_STATE_ARMED);
             BB_RequestNewFile();    // 每次解锁开一个新日志文件
+
+            IndicatorEvent_t evt = EVT_ARMED;
+            osMessageQueuePut(IndicatorEventQueueHandle, &evt, 0, 0);
         }
         return;
     }
@@ -82,6 +86,9 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
         s_disarmed_hold_active = false;
         BB_LogArmChanged(osKernelGetTickCount(), ARM_STATE_DISARMED);
         BB_RequestClose();  // 紧急disarm需要确保数据落盘
+
+        IndicatorEvent_t evt = EVT_DISARMED;
+        osMessageQueuePut(IndicatorEventQueueHandle, &evt, 0, 0);
         return;
     }
 
@@ -98,6 +105,9 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
             s_disarmed_hold_active = false;
             BB_LogArmChanged(osKernelGetTickCount(), ARM_STATE_DISARMED);
             BB_RequestClose();
+
+            IndicatorEvent_t evt = EVT_DISARMED;
+            osMessageQueuePut(IndicatorEventQueueHandle, &evt, 0, 0);
         }
     }
     else{
