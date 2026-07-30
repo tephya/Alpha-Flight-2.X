@@ -132,9 +132,6 @@ int8_t BB_Init(void)
 {
     char filename[16];
     FILINFO fno;
-
-    if(BSP_SD_Init() != 0)
-        return -1;
     
     if(f_mount(&s_fs, "", 1) != FR_OK)
         return -1;

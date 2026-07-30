@@ -36,6 +36,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include <string.h>
 #include "ff_gen_drv.h"
+#include "bsp_sdcard.h"
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
@@ -82,8 +83,19 @@ DSTATUS USER_initialize (
 )
 {
   /* USER CODE BEGIN INIT */
+  (void)pdrv;     // 单卷单物理盘，用不上这个参数
+
+  if(BSP_SD_Init() == 0)
+  {
+    BSP_SD_SetSpeedFast();    // 握手完成后切换到目标速度，只会在这里(f_mount)执行一次
+    Stat &= ~STA_NOINIT;    // 只清NOTINIT位，不直接置0-保留其余状态位的语义完整性
+  }
+  else
+  {
     Stat = STA_NOINIT;
-    return Stat;
+  }
+
+  return Stat;
   /* USER CODE END INIT */
 }
 
@@ -97,8 +109,8 @@ DSTATUS USER_status (
 )
 {
   /* USER CODE BEGIN STATUS */
-    Stat = STA_NOINIT;
-    return Stat;
+  (void)pdrv;
+  return Stat;    // 如实返回当前状态，不能每次都重置为STA_NOINIT，否则f_mount内部的状态查询会永远认为盘没初始化过
   /* USER CODE END STATUS */
 }
 
@@ -118,7 +130,18 @@ DRESULT USER_read (
 )
 {
   /* USER CODE BEGIN READ */
-    return RES_OK;
+  (void)pdrv;
+
+  if(Stat & STA_NOINIT)
+    return RES_NOTRDY;
+
+  for (UINT i = 0; i < count; i++)
+  {
+    if(BSP_SD_ReadBlock(sector + i, buff + i * 512U) != 0)
+      return RES_ERROR;
+  }
+
+  return RES_OK;
   /* USER CODE END READ */
 }
 
@@ -140,7 +163,18 @@ DRESULT USER_write (
 {
   /* USER CODE BEGIN WRITE */
   /* USER CODE HERE */
-    return RES_OK;
+  (void)pdrv;
+
+  if(Stat & STA_NOINIT)
+    return RES_NOTRDY;
+
+  for (UINT i = 0; i < count; i++)
+  {
+    if (BSP_SD_WriteBlock(sector + i, buff + i * 512U) != 0)
+      return RES_ERROR;
+  }
+
+  return RES_OK;
   /* USER CODE END WRITE */
 }
 #endif /* _USE_WRITE == 1 */
@@ -160,8 +194,43 @@ DRESULT USER_ioctl (
 )
 {
   /* USER CODE BEGIN IOCTL */
-    DRESULT res = RES_ERROR;
-    return res;
+  (void)pdrv;
+
+  DRESULT res = RES_ERROR;
+
+  if(Stat & STA_NOINIT)
+    return RES_NOTRDY;
+
+  switch (cmd)
+  {
+  case CTRL_SYNC:
+    // 本驱动是同步写(BSP_SD_WriteBlock内部已经等到DMA+Busy结束后才返回)，没有额外缓存需要flush
+    res = RES_OK;
+    break;
+
+  case GET_SECTOR_SIZE:
+    *(WORD *)buff = 512U;
+    res = RES_OK;
+    break;
+
+  case GET_SECTOR_COUNT:
+    // f_mount不需要这个值，只有f_mkfs才需要；当前FF_USE_MKFS=0，暂不实现，返回0
+    *(DWORD *)buff = 0;
+    res = RES_OK;
+    break;
+
+  case GET_BLOCK_SIZE:
+    // SPI模式SD卡不关心erase block siez，返回1(单位：扇区)即可
+    *(DWORD *)buff = 1;
+    res = RES_OK;
+    break;
+
+  default:
+    res = RES_PARERR;
+    break;
+  }
+
+  return res;
   /* USER CODE END IOCTL */
 }
 #endif /* _USE_IOCTL == 1 */

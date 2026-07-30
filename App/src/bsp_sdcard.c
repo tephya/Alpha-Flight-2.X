@@ -188,17 +188,6 @@ int8_t BSP_SD_Init(void)
 }
 
 /**
- * @brief   切换SPI2波特率分频(初始化用低速，握手完成后切全速)
- * @param   prescaler   SPI_BAUDRATEPRESCALER_x(HAL宏)
- */
-void BSP_SD_SetSpeed(uint32_t prescaler)
-{
-    __HAL_SPI_DISABLE(&hspi2);
-    hspi2.Instance->CR1 = (hspi2.Instance->CR1 & ~SPI_CR1_BR) | prescaler;
-    __HAL_SPI_ENABLE(&hspi2);
-}
-
-/**
  * @brief   读取单个512字节Block(全程走DMA)
  * @note    寻址逻辑：SDHC卡block参数直接当Block号；SDSC卡内部转换为字节地址(Blcok*512)。
  *          时序：CMD17取R1 ->
@@ -314,4 +303,52 @@ int8_t BSP_SD_WriteBlock(uint32_t block, const uint8_t *buf)
 
     SD_CS_High();
     return 0;
+}
+
+/**
+ * @brief   切换SPI2波特率分频(初始化用低速，握手完成后切全速)
+ * @param   prescaler   SPI_BAUDRATEPRESCALER_x(HAL宏)
+ */
+static void BSP_SD_SetSpeed(uint32_t prescaler)
+{
+    __HAL_SPI_DISABLE(&hspi2);
+    hspi2.Instance->CR1 = (hspi2.Instance->CR1 & ~SPI_CR1_BR) | prescaler;
+    __HAL_SPI_ENABLE(&hspi2);
+}
+
+/**
+ * @brief   运行时动态算出不超过2.625MHz的最高档位并切换
+ * @note    2.625MHz是裸机架构实测验证过的安全上限，频率再高读写会不稳定。
+ *          SPI2挂在APB1上，用HAL_RCC_GetPCLK1Freq()拿原始APB1时钟，
+ *          (SPI外设不像定时器有"预分频≠1就乘2的规则")，直接是PCLK/prescaler，
+ *          不假设具体时钟数数值，避免时钟配置变动后这里算错速度
+ */
+void BSP_SD_SetSpeedFast(void)
+{
+    static const uint32_t s_divs[] = {2, 4, 8, 16, 32, 64, 128, 256};
+    static const uint32_t s_prescs[] = {
+        SPI_BAUDRATEPRESCALER_2,
+        SPI_BAUDRATEPRESCALER_4,
+        SPI_BAUDRATEPRESCALER_8,
+        SPI_BAUDRATEPRESCALER_16,
+        SPI_BAUDRATEPRESCALER_32,
+        SPI_BAUDRATEPRESCALER_64,
+        SPI_BAUDRATEPRESCALER_128,
+        SPI_BAUDRATEPRESCALER_256,
+    };
+    const uint32_t target_hz = 2625000UL;
+
+    uint32_t pclk = HAL_RCC_GetPCLK1Freq();
+    uint32_t chosen = SPI_BAUDRATEPRESCALER_256;    // 找不到合适档位时的保守兜底
+
+    for (uint8_t i = 0; i < sizeof(s_divs) / sizeof(s_divs[0]); i++)
+    {
+        if((pclk / s_divs[i]) <= target_hz)
+        {
+            chosen = s_prescs[i];       // s_divs从小到大排列，第一个不超标的就是最接近且不超标的档位
+            break;
+        } 
+    }
+
+    BSP_SD_SetSpeed(chosen);
 }

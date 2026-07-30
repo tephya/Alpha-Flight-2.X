@@ -14,6 +14,6 @@ typedef enum
 int8_t BSP_SD_Init(void);
 int8_t BSP_SD_ReadBlock(uint32_t block, uint8_t *buf);
 int8_t BSP_SD_WriteBlock(uint32_t block, const uint8_t *buf);
-void BSP_SD_SetSpeed(uint32_t prescaler);
+void BSP_SD_SetSpeedFast(void);
 
 #endif

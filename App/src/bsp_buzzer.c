@@ -2,7 +2,7 @@
 #include "tim.h"
 
 #define BUZZER_FREQ_HZ 2048U // 无源蜂鸣器谐振频率2.048KHz(根据实际情况调整)
-#define BUZZER_DUTY_PERCENT 15U // 音量大小调整入口(50U时音量最大，左右递增或递减音量会削减)
+#define BUZZER_DUTY_PERCENT 1U // 音量大小调整入口(50U时音量最大，左右递增或递减音量会削减)
 
 extern TIM_HandleTypeDef htim3;
 
