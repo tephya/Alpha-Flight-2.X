@@ -39,7 +39,6 @@
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
-typedef StaticQueue_t osStaticMessageQDef_t;
 /* USER CODE BEGIN PTD */
 
 /* USER CODE END PTD */
@@ -113,17 +112,6 @@ const osThreadAttr_t Task_IWDG_Feed_attributes = {
   .name = "Task_IWDG_Feed",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityRealtime4,
-};
-/* Definitions for BlackboxLogQueue */
-osMessageQueueId_t BlackboxLogQueueHandle;
-uint8_t BlackboxLogQueueBuffer[ 24 * sizeof( Blackbox_Frame_t ) ];
-osStaticMessageQDef_t BlackboxLogQueueCB;
-const osMessageQueueAttr_t BlackboxLogQueue_attributes = {
-  .name = "BlackboxLogQueue",
-  .cb_mem = &BlackboxLogQueueCB,
-  .cb_size = sizeof(BlackboxLogQueueCB),
-  .mq_mem = &BlackboxLogQueueBuffer,
-  .mq_size = sizeof(BlackboxLogQueueBuffer)
 };
 /* Definitions for RCChannelMailbox */
 osMessageQueueId_t RCChannelMailboxHandle;
@@ -217,9 +205,6 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the queue(s) */
-  /* creation of BlackboxLogQueue */
-  BlackboxLogQueueHandle = osMessageQueueNew (24, sizeof(Blackbox_Frame_t), &BlackboxLogQueue_attributes);
-
   /* creation of RCChannelMailbox */
   RCChannelMailboxHandle = osMessageQueueNew (1, sizeof(RCChannelData_t), &RCChannelMailbox_attributes);
 
@@ -371,7 +356,11 @@ void StartTask_PowerMonitor(void *argument)
 {
   /* USER CODE BEGIN StartTask_PowerMonitor */
   /* Infinite loop */
-  App_PowerMonit_Task(argument);
+  // App_PowerMonit_Task(argument);
+  for (;;)
+  {
+    osDelay(1);
+  }
   /* USER CODE END StartTask_PowerMonitor */
 }
 

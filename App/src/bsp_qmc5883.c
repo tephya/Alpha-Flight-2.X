@@ -1,5 +1,5 @@
 #include "bsp_qmc5883.h"
-
+#include "cmsis_os2.h"
 
 #define IIC_CHECK(x) do{                \
             HAL_StatusTypeDef _s = (x); \
@@ -27,7 +27,7 @@ static MAG_Data_t mag_data;
  */
 HAL_StatusTypeDef QMC_Init(void)
 {
-    HAL_Delay(1); // POR Complication Time --max 250us
+    osDelay(1); // POR Complication Time --max 250us
 
     IIC_CHECK(IIC_WriteReg(QMC_ADDR, 0x29, 0x06));
     IIC_CHECK(IIC_WriteReg(QMC_ADDR, 0x0B, 0x08));  // ±8g

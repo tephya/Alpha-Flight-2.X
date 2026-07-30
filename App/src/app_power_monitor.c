@@ -9,7 +9,7 @@
 #define VBAT_FAULT_CONFIRM_COUNT 5      // 连续5次(≈500ms @100ms周期)低于阈值才确认，滤掉大机动瞬时压降造成的误判
 
 #define VBAT_LOW_WARNING_THRESHOLD 14.0f // 早期预警阈值，跟触发disarm的13.2V是两回事，只提示不动作
-#define VBAT_LOW_WARNING_RECOVER 14.2 // 迟滞：回升到此值以上才允许下次再报警，防止临界点反复提示
+#define VBAT_LOW_WARNING_RECOVER 14.2f // 迟滞：回升到此值以上才允许下次再报警，防止临界点反复提示
 
 #define CRITICAL_BATTERY_REPOST_MS 1000U // 持续报警重发间隔，需大于EVT_CRITICAL_BATTERY节拍自身播放时长(约740ms)
 

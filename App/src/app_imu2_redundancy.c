@@ -142,12 +142,7 @@ static void Health_RecordBad(void)
                 g_imu_health.imu2_healthy = 0;
 
             if(!g_imu_health.dual_fault)            // 跳边沿才记，持续锁存期间不用重复写
-            {
                 BB_LogDualFault(osKernelGetTickCount());
-
-                IndicatorEvent_t evt = EVT_IMU_FAULT;
-                osMessageQueuePut(IndicatorEventQueueHandle, &evt, 0, 0);
-            }
 
             g_imu_health.dual_fault = 1;
         }

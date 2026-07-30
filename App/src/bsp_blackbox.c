@@ -203,7 +203,7 @@ int8_t BB_LogVoltageFault(uint16_t time_ms)
 
 int8_t BB_LogImuSwitch(uint16_t time_ms, uint8_t new_active_imu)
 {
-    BB_ImuSwitchRec_t rec = {BB_FRAME_MAGIC, BB_REC_IMU_SWITCH, time_ms};
+    BB_ImuSwitchRec_t rec = {BB_FRAME_MAGIC, BB_REC_IMU_SWITCH, time_ms, new_active_imu};
     return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));
 }
 

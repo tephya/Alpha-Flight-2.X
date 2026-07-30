@@ -37,20 +37,6 @@ static const BeepStep_t s_pat_imu_fault[] = {{60, 60}, {60, 60}, {60, 60}, {60, 
 static const BeepStep_t s_pat_rc_lost[] = {{600, 200}, {600, 200}, {600, 0}};       // 三声长鸣，最沉稳但最不能忽略
 
 
-// 下标必须跟app_shared_types.h里的IndicatorEvnet的定义顺序完全一致
-static const IndicatorPattern_t s_patterns[] =
-{
-    [EVT_ARMED] = {s_pat_armed, 1, INDICATOR_PRIO_NOTICE},
-    [EVT_DISARMED] = {s_pat_disarmed, 2, INDICATOR_PRIO_NOTICE},
-    [EVT_LOW_BATTERY] = {s_pat_low_battery, 3, INDICATOR_PRIO_WARNING},
-    [EVT_CRITICAL_BATTERY] = {s_pat_critical_battery, 5, INDICATOR_PRIO_CRITICAL},
-    [EVT_GPS_FIX_ACQUIRED] = {s_pat_gps_fix, 3, INDICATOR_PRIO_NOTICE},
-    [EVT_SD_CARD_FULL] = {s_pat_sd_full, 3, INDICATOR_PRIO_WARNING},
-    [EVT_SD_CARD_ERROR] = {s_pat_sd_error, 2, INDICATOR_PRIO_CRITICAL},
-    [EVT_IMU_FAULT] = {s_pat_imu_fault, 6, INDICATOR_PRIO_CRITICAL},
-    [EVT_RC_LOST] = {s_pat_rc_lost, 3, INDICATOR_PRIO_CRITICAL},
-};
-
 /**
  * @brief   按事件类型返回对应节拍
  * @note    靠枚举名字(case)绑定，不靠数组位置，
@@ -187,7 +173,7 @@ void App_Indicator_Task(void *argument)
             continue;       // 异常值，防御性丢弃，不该发生
 
         IndicatorEvent_t preempt_evt;
-        while(Indicator_PlayPattern(&s_patterns[evt], &preempt_evt))
+        while(Indicator_PlayPattern(pat, &preempt_evt))
         {
             evt = preempt_evt;  // 被打断，紧接着播放打断它的那个事件；如果那个又被更高优先级打断，继续循环
         }

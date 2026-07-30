@@ -24,7 +24,7 @@ void BSP_LED_Off(void)
     HAL_GPIO_WritePin(State_LED_GPIO_Port, State_LED_Pin, LED_OFF_LEVEL);
 }
 
-void VSP_LED_Toggle(void)
+void BSP_LED_Toggle(void)
 {
     HAL_GPIO_TogglePin(State_LED_GPIO_Port, State_LED_Pin);
 }

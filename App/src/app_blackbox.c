@@ -42,13 +42,13 @@ void App_Blackbox_Task(void *argument)
                     ;       // 关闭前先把剩余READY数据先落盘，再flush尾巴+真正关闭文件
                 BB_Close();
             }
-        }
 
-        if(ctrl && BB_CTRL_NEWFILE_REQ)
-        {
-            while(BB_Init() != 0)
-                osDelay(500);   // 挂载失败，定期重试而非直接卡死
-            BB_BufferInit();
+            if (ctrl && BB_CTRL_NEWFILE_REQ)
+            {
+                while (BB_Init() != 0)
+                    osDelay(500); // 挂载失败，定期重试而非直接卡死
+                BB_BufferInit();
+            }
         }
 
         /* BB_GetErrorFlags()的bit0(缓冲溢出)/bit1(SD写入失败)都归为EVT_SD_CARD_ERROR，

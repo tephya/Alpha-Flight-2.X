@@ -45,7 +45,7 @@ void MX_IWDG_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN IWDG_Init 2 */
-  // 防止Debug期间IWDG自动复位
+  // 防止Debug期间IWDG自动�?�?
   #if defined(DBGMCU_APB1_FZ_DBG_IWDG_STOP)
   DBGMCU->APB1FZ |= DBGMCU_APB1_FZ_DBG_IWDG_STOP;
   #endif
