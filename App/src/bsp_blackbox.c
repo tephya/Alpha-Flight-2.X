@@ -133,7 +133,8 @@ int8_t BB_Init(void)
     char filename[16];
     FILINFO fno;
     
-    if(f_mount(&s_fs, "", 1) != FR_OK)
+	FRESULT res = f_mount(&s_fs, "", 1);
+    if(res != FR_OK)
         return -1;
 
     for (int i = 0; i < 1000; i++)

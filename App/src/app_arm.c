@@ -4,8 +4,12 @@
 #include <math.h>
 #include "cmsis_os2.h"
 
+
 extern osEventFlagsId_t SystemReadyEventGroupHandle;
 extern osMessageQueueId_t IndicatorEventQueueHandle;
+
+#define DEBUG_SKIP_ARM_READY_CHECK 1 // TODO：装机带奖试飞前须删除这个宏和Arm_Update中的#if
+
 
 #define ARM_RC_CHANNEL_SWITCH 4
 #define ARM_RC_CHANNEL_THROTTLE 2
@@ -61,12 +65,12 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
     if(g_arm_state == ARM_STATE_DISARMED)
     {
         s_disarmed_hold_active = false;     // Disarmed期间不需要计时
-
+#if !DEBUG_SKIP_ARM_READY_CHECK
         if (osEventFlagsGet(SystemReadyEventGroupHandle) != SYSREADY_ARM_MASK)
         {
             return;         // 系统未就绪(GPS/MAG/VBAT/RC_rssi/IMU_health任一未达标)，禁止解锁
         }
-
+#endif
         if(Arm_SwitchOn(rc) && Arm_ThrottleLow(rc) && Arm_TiltOk(roll_meas, pitch_meas))
         {
             g_arm_state = ARM_STATE_ARMED;

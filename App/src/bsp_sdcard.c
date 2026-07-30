@@ -128,6 +128,11 @@ int8_t BSP_SD_Init(void)
     s_sdXferSem = osSemaphoreNew(1, 0, NULL);
     memset(s_sdTxDummy, 0xFF, sizeof(s_sdTxDummy));
 
+    /* 卡上电(或MCU复位但卡未真正掉电)后先给一点真实事件，让卡内部状态机
+     * 有机会从上一次可能遗留的“半截”状态里自行超时回复-MCU的NRST不会让
+     * SD卡VDD跟着掉电重置，卡记得自己上次没聊完的那句话 */
+    osDelay(10);    
+
     HAL_GPIO_WritePin(SD_CS_GPIO_Port, SD_CS_Pin, GPIO_PIN_SET);
     for (int i = 0; i < 10; i++)
         SD_SPI_RWByte(0xFF);        // >=74 dummy clock
@@ -139,8 +144,14 @@ int8_t BSP_SD_Init(void)
         SD_CS_LOW();
         res = SD_SendCmd(0, 0x00000000);
         SD_CS_High();
-        if(res == 0x01)
+		
+		SD_SPI_RWByte(0xFF);
+        
+		if(res == 0x01)
             break;
+
+        /* 给卡的内部超时机制机会自己复位回idle态 */
+        osDelay(2);
     }
     if(res != 0x01)
         return -1;
