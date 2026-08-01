@@ -60,7 +60,9 @@ typedef struct
 static FATFS s_fs;
 static FIL s_fil;
 
+#pragma arm section zidata = "DMA_SAFE_SRAM"
 static BB_Buffer_t s_buf[2];        // 创建双缓冲区
+#pragma arm section zidata
 static uint8_t s_fillIndex = 0;
 static osSemaphoreId_t s_dataReadySem = NULL;
 static osEventFlagsId_t s_ctrlEvt = NULL;
@@ -163,9 +165,25 @@ void BB_BufferInit(void)
     s_buf[1].state = BB_BUF_FREE;
 
     s_fillIndex = 0;
-    s_dataReadySem = osSemaphoreNew(2, 0, NULL);        // 最多两块缓冲同时待处理
+
+    /* 只在第一次创建——现在每次重新解锁都会调用一次BB_BufferInit，
+     * 不加这个保护会导致每次解锁都新建一个信号量对象，旧对象没人释放，
+     * 长期运行下去会泄漏RTOS内核对象 */
+    if(s_dataReadySem == NULL)
+        s_dataReadySem = osSemaphoreNew(2, 0, NULL); // 最多两块缓冲同时待处理
+
     s_overflowFlag = 0;
     s_writeErrorFlag = 0;
+}
+
+/**
+ * @brief   创建控制请求用的事件对象，必须在第一次调用BB_RequestNewFile()/
+ *          BB_PollControlRequest()之前调用一次(在Task_Blackbox一开始就调)
+ */
+void BB_ControlInit(void)
+{
+    if(s_ctrlEvt == NULL)
+        s_ctrlEvt = osEventFlagsNew(NULL);
 }
 
 int8_t BB_LogMotion(uint16_t time_ms, const int16_t angle_cdeg[3],

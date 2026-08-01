@@ -87,8 +87,8 @@ DSTATUS USER_initialize (
 
   if(BSP_SD_Init() == 0)
   {
-    BSP_SD_SetSpeedFast();    // 握手完成后切换到目标速度，只会在这里(f_mount)执行一次
-    Stat &= ~STA_NOINIT;    // 只清NOTINIT位，不直接置0-保留其余状态位的语义完整性
+    BSP_SD_SetSpeedFast();    // 握手完成后切到目标速度，只会在这里(f_mount首次触发)执行一次
+    Stat &= ~STA_NOINIT;    // 只清NOINIT位，不直接置0——保留其余状态位的语义完整性
   }
   else
   {
@@ -110,7 +110,7 @@ DSTATUS USER_status (
 {
   /* USER CODE BEGIN STATUS */
   (void)pdrv;
-  return Stat;    // 如实返回当前状态，不能每次都重置为STA_NOINIT，否则f_mount内部的状态查询会永远认为盘没初始化过
+  return Stat;    // 如实返回当前状态
   /* USER CODE END STATUS */
 }
 
@@ -137,7 +137,7 @@ DRESULT USER_read (
 
   for (UINT i = 0; i < count; i++)
   {
-    if(BSP_SD_ReadBlock(sector + i, buff + i * 512U) != 0)
+    if (BSP_SD_ReadBlock(sector + i, buff + i * 512U) != 0)
       return RES_ERROR;
   }
 
@@ -204,7 +204,7 @@ DRESULT USER_ioctl (
   switch (cmd)
   {
   case CTRL_SYNC:
-    // 本驱动是同步写(BSP_SD_WriteBlock内部已经等到DMA+Busy结束后才返回)，没有额外缓存需要flush
+    // 本驱动是同步写(BSP_SD_WriteBlock内部已经等到DMA+Busy结束才返回)，没有额外缓存需要flush
     res = RES_OK;
     break;
 
@@ -220,7 +220,7 @@ DRESULT USER_ioctl (
     break;
 
   case GET_BLOCK_SIZE:
-    // SPI模式SD卡不关心erase block siez，返回1(单位：扇区)即可
+    // SPI模式SD卡不关心erase block size，返回1(单位=扇区)即可
     *(DWORD *)buff = 1;
     res = RES_OK;
     break;

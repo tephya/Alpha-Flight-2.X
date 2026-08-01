@@ -56,8 +56,14 @@ DSTATUS disk_initialize (
 
   if(disk.is_initialized[pdrv] == 0)
   {
-    disk.is_initialized[pdrv] = 1;
+    /* 只有真正握手成功才锁存is_initialized，失败的话保持0，
+     * 让下一次disk_initialize()调用有机会重新调用USER_initialize再握手一次，
+     * 而不是从第一次失败起就永远跳过真实初始化 */
     stat = disk.drv[pdrv]->disk_initialize(disk.lun[pdrv]);
+    if(!(stat & STA_NOINIT))
+    {
+      disk.is_initialized[pdrv] = 1;
+    }
   }
   return stat;
 }

@@ -17,7 +17,9 @@
  * 跟HAL_TIM_DMABurst_MultiWriteStart()函数原型接收uint32_t*无关，
  * 调用时强转指针类型即可，缓存区本身不能声明为uint32_t，否则实际发出去的半子数据会错位。
  */
+#pragma arm section zidata = "DMA_SAFE_SRAM"
 static uint16_t s_dshot_buf[DSHOT_FRAME_LEN * DSHOT_CHANNELS];
+#pragma arm section zidata
 
 /**
  * @brief   编码单通道DSHOT数据帧并计算 CRC 校验码

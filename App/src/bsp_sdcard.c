@@ -15,8 +15,10 @@ static osSemaphoreId_t s_sdXferSem = NULL;
 static volatile uint8_t s_sdDmaError = 0;
 
 // DMA全双工传输时，不关心的一侧用这两个静态scratch缓冲填充，避免每次现场申请栈内存
+#pragma arm section zidata = "DMA_SAFE_SRAM"
 static uint8_t s_sdTxDummy[512];
 static uint8_t s_sdRxSink[512];
+#pragma arm section zidata		// 恢复默认，后面的变量不受影响
 
 static void SD_CS_High(void)
 {
@@ -74,12 +76,30 @@ static int8_t SD_SPI_DMA_Transceive(const uint8_t *tx, uint8_t *rx, uint16_t len
 
     s_sdDmaError = 0;
 
+    /* 正式发起这次传输前，先非阻塞地把信号量清空一次，
+     * 正常情况下这里应该拿不到东西(超时立刻返回)，如果真的拿到了，
+     * 说明是上一次传输遗留的、没被消费掉的信号，直接丢弃，
+     * 确保接下来真正的osSemaphoreAcquire等到的一定是这次传输自己的完成信号 */
+    osSemaphoreAcquire(s_sdXferSem, 0);
+
     if(HAL_SPI_TransmitReceive_DMA(&hspi2, (uint8_t *)tx, rx, len) != HAL_OK)
         return -2;
 
     osStatus_t st = osSemaphoreAcquire(s_sdXferSem, SD_DMA_TIMEOUT_MS);
     if(st != osOK)
+    {
+        /* 超时后必须主动叫停这次还没完成的DMA传输，不能只是放弃等待就走人，
+         * 否则DMA可能在后台继续跑，若干毫秒后真的完成时触发HAL_SPI_TxRxCpltCallback，
+         * 凭空多释放一次信号量，没人消费。下一次全新的读写请求一旦撞上这次迟到的释放，
+         * osSemaphoreAcquire会立刻“成功”返回，实际上根本没等到这一次真正的DMA完成，
+         * 读到的数据是不完整/过期的 */
+
+         /* 加上这行之后，结果导致几乎每次都失败(-2/-3)，
+          * 怀疑是这行内部把SPI外设本身也关掉了，导致或许大量阻塞式单字节收发全部失效；
+          * 先撤回，回到只有排空信号量这一步，隔离变量重新验证是不是这一行导致的问题 */
+        // HAL_SPI_DMAStop(&hspi2);
         return -3;      // 超时
+    }
 
     if(s_sdDmaError)
         return -4;
@@ -198,6 +218,17 @@ int8_t BSP_SD_Init(void)
     return 0;
 }
 
+// TODO调试专用：逐字节阻塞版本，跟DMA版本对比耗时，验证是不是DMA突发时序在跟卡较劲
+static int8_t SD_SPI_Blocking_Read512(uint8_t *buf)
+{
+    uint32_t start_tick = osKernelGetTickCount();
+    for (int i = 0; i < 512; i++)
+    {
+        buf[i] = SD_SPI_RWByte(0xFF);
+    }
+    return 0;
+}
+
 /**
  * @brief   读取单个512字节Block(全程走DMA)
  * @note    寻址逻辑：SDHC卡block参数直接当Block号；SDSC卡内部转换为字节地址(Blcok*512)。
@@ -224,6 +255,7 @@ int8_t BSP_SD_ReadBlock(uint32_t block, uint8_t *buf)
         res = SD_SendCmd(17, addr);
         if(res == 0x00)
             break;
+        osDelay(2);
     }
     if(res != 0x00){ SD_CS_High(); return -1; }
 
@@ -240,6 +272,11 @@ int8_t BSP_SD_ReadBlock(uint32_t block, uint8_t *buf)
         SD_CS_High();
         return -3;
     }
+//    if(SD_SPI_Blocking_Read512(buf) != 0)
+//    {
+//        SD_CS_High();
+//        return -3;
+//    }
 
     SD_SPI_RWByte(0xFF);    // CRC1
     SD_SPI_RWByte(0xFF);    // CRC2
@@ -277,6 +314,7 @@ int8_t BSP_SD_WriteBlock(uint32_t block, const uint8_t *buf)
         res = SD_SendCmd(24, addr);
         if(res == 0x00)
             break;
+        osDelay(2);
     }
     if(res != 0x00){ SD_CS_High(); return -1; }
 

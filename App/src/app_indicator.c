@@ -62,34 +62,34 @@ static const IndicatorPattern_t *Indicator_GetPattern(IndicatorEvent_t evt)
                                                INDICATOR_PRIO_NOTICE};
         return &pat;
     }
-    case EVT_LOW_BATTERY:
-    {
-        static const IndicatorPattern_t pat = {s_pat_low_battery,
-                                               3,
-                                               INDICATOR_PRIO_WARNING};
-        return &pat;
-    }
-    case EVT_CRITICAL_BATTERY:
-    {
-        static const IndicatorPattern_t pat = {s_pat_critical_battery,
-                                               5,
-                                               INDICATOR_PRIO_CRITICAL};
-        return &pat;
-    }
-    case EVT_GPS_FIX_ACQUIRED:
-    {
-        static const IndicatorPattern_t pat = {s_pat_gps_fix,
-                                               3,
-                                               INDICATOR_PRIO_NOTICE};
-        return &pat;
-    }
-    case EVT_SD_CARD_FULL:
-    {
-        static const IndicatorPattern_t pat = {s_pat_sd_full,
-                                               3,
-                                               INDICATOR_PRIO_WARNING};
-        return &pat;
-    }
+    // case EVT_LOW_BATTERY:
+    // {
+    //     static const IndicatorPattern_t pat = {s_pat_low_battery,
+    //                                            3,
+    //                                            INDICATOR_PRIO_WARNING};
+    //     return &pat;
+    // }
+    // case EVT_CRITICAL_BATTERY:
+    // {
+    //     static const IndicatorPattern_t pat = {s_pat_critical_battery,
+    //                                            5,
+    //                                            INDICATOR_PRIO_CRITICAL};
+    //     return &pat;
+    // }
+    // case EVT_GPS_FIX_ACQUIRED:
+    // {
+    //     static const IndicatorPattern_t pat = {s_pat_gps_fix,
+    //                                            3,
+    //                                            INDICATOR_PRIO_NOTICE};
+    //     return &pat;
+    // }
+    // case EVT_SD_CARD_FULL:
+    // {
+    //     static const IndicatorPattern_t pat = {s_pat_sd_full,
+    //                                            3,
+    //                                            INDICATOR_PRIO_WARNING};
+    //     return &pat;
+    // }
     case EVT_SD_CARD_ERROR:
     {
         static const IndicatorPattern_t pat = {s_pat_sd_error,
@@ -97,20 +97,20 @@ static const IndicatorPattern_t *Indicator_GetPattern(IndicatorEvent_t evt)
                                                INDICATOR_PRIO_CRITICAL};
         return &pat;
     }
-    case EVT_IMU_FAULT:
-    {
-        static const IndicatorPattern_t pat = {s_pat_imu_fault,
-                                               6,
-                                               INDICATOR_PRIO_CRITICAL};
-        return &pat;
-    }
-    case EVT_RC_LOST:
-    {
-        static const IndicatorPattern_t pat = {s_pat_rc_lost,
-                                               3,
-                                               INDICATOR_PRIO_CRITICAL};
-        return &pat;
-    }
+    // case EVT_IMU_FAULT:
+    // {
+    //     static const IndicatorPattern_t pat = {s_pat_imu_fault,
+    //                                            6,
+    //                                            INDICATOR_PRIO_CRITICAL};
+    //     return &pat;
+    // }
+    // case EVT_RC_LOST:
+    // {
+    //     static const IndicatorPattern_t pat = {s_pat_rc_lost,
+    //                                            3,
+    //                                            INDICATOR_PRIO_CRITICAL};
+    //     return &pat;
+    // }
     default:
         return NULL;        // 不认识的事件值，调用方需检查NULL
     }

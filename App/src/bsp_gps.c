@@ -9,7 +9,9 @@
 
 #define GPS_HOME_MIN_SATELLITES 4       // 起飞点记录成功所需卫星最小数量
 
+#pragma arm section zidata = "DMA_SAFE_SRAM"
 static uint8_t gps_dma_buf[GPS_DMA_BUF_SIZE];  // DMA直接写入区
+#pragma arm section zidata
 static uint8_t gps_proc_buf[GPS_DMA_BUF_SIZE];  // Task读取的快照区，双缓冲
 static volatile uint16_t gps_proc_len = 0;
 static volatile uint8_t gps_data_ready = 0;     // 1=就绪，0=等待数据传输

@@ -21,6 +21,8 @@ typedef enum
 
 int8_t BB_Init(void);
 void BB_BufferInit(void);
+void BB_ControlInit(void);
+
 /*====== 生产者接口：各Task/模块调用，写入一条记录 ======*/
 /* 高频运动帧：由Task_FlightCtrl每控制周期调用 */
 int8_t BB_LogMotion(uint16_t time_ms, const int16_t angle_cdeg[3],

@@ -275,6 +275,10 @@ void StartTask_FlightControl(void *argument)
   /* USER CODE BEGIN StartTask_FlightControl */
   /* Infinite loop */
   App_FlightCtrl_Task(argument);
+  // for (;;)
+  // {
+  //   osDelay(1);
+  // }
   /* USER CODE END StartTask_FlightControl */
 }
 
@@ -290,6 +294,10 @@ void StartTask_RC_LINK(void *argument)
   /* USER CODE BEGIN StartTask_RC_LINK */
   /* Infinite loop */
   App_RcLink_Task(argument);
+  // for (;;)
+  // {
+  //   osDelay(1);
+  // }
   /* USER CODE END StartTask_RC_LINK */
 }
 
@@ -324,6 +332,10 @@ void StartTask_Blackbox(void *argument)
   /* USER CODE BEGIN StartTask_Blackbox */
   /* Infinite loop */
   App_Blackbox_Task(argument);
+  // for (;;)
+  // {
+  //   osDelay(1);
+  // }
   /* USER CODE END StartTask_Blackbox */
 }
 
@@ -376,6 +388,10 @@ void StartTask_Indicator(void *argument)
   /* USER CODE BEGIN StartTask_Indicator */
   /* Infinite loop */
   App_Indicator_Task(argument);
+  // for (;;)
+  // {
+  //   osDelay(1);
+  // }
   /* USER CODE END StartTask_Indicator */
 }
 

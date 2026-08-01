@@ -26,7 +26,9 @@ static uint8_t s_frame_ready = 0;
 static uint16_t s_read_ptr = 0;
 
 static uint8_t s_frame_buf[BUFF_SIZE];
+#pragma arm section zidata = "DMA_SAFE_SRAM"
 static uint8_t s_dma_rx_buf[DMA_BUF_SIZE];
+#pragma arm section zidata
 
 static RCChannelData_t s_rc_data = {0};
 static volatile uint32_t s_last_valid_frame_tick = 0;
