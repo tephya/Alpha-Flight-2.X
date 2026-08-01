@@ -31,7 +31,6 @@ static const BeepStep_t s_pat_disarmed[] = {{80, 80}, {80, 0}};   // 两声短�
 static const BeepStep_t s_pat_low_battery[] = {{300, 150}, {300, 150}, {300, 0}};     // 三声中等
 static const BeepStep_t s_pat_critical_battery[] = {{100, 60}, {100, 60}, {100, 60}, {100, 60}, {100, 0}};    // 五连急促
 static const BeepStep_t s_pat_gps_fix[] = {{50, 50}, {50, 50}, {50, 0}};            // 三声轻快短
-static const BeepStep_t s_pat_sd_full[] = {{200, 150}, {200, 150}, {200, 150}, {200, 0}};
 static const BeepStep_t s_pat_sd_error[] = {{400, 200}, {400, 0}};              // 两声长鸣，区别于低压警告
 static const BeepStep_t s_pat_imu_fault[] = {{60, 60}, {60, 60}, {60, 60}, {60, 60}, {60, 60}, {60, 0}};        // 六连急促
 static const BeepStep_t s_pat_rc_lost[] = {{600, 200}, {600, 200}, {600, 0}};       // 三声长鸣，最沉稳但最不能忽略
@@ -83,13 +82,7 @@ static const IndicatorPattern_t *Indicator_GetPattern(IndicatorEvent_t evt)
     //                                            INDICATOR_PRIO_NOTICE};
     //     return &pat;
     // }
-    // case EVT_SD_CARD_FULL:
-    // {
-    //     static const IndicatorPattern_t pat = {s_pat_sd_full,
-    //                                            3,
-    //                                            INDICATOR_PRIO_WARNING};
-    //     return &pat;
-    // }
+
     case EVT_SD_CARD_ERROR:
     {
         static const IndicatorPattern_t pat = {s_pat_sd_error,
