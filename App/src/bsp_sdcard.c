@@ -88,16 +88,6 @@ static int8_t SD_SPI_DMA_Transceive(const uint8_t *tx, uint8_t *rx, uint16_t len
     osStatus_t st = osSemaphoreAcquire(s_sdXferSem, SD_DMA_TIMEOUT_MS);
     if(st != osOK)
     {
-        /* 超时后必须主动叫停这次还没完成的DMA传输，不能只是放弃等待就走人，
-         * 否则DMA可能在后台继续跑，若干毫秒后真的完成时触发HAL_SPI_TxRxCpltCallback，
-         * 凭空多释放一次信号量，没人消费。下一次全新的读写请求一旦撞上这次迟到的释放，
-         * osSemaphoreAcquire会立刻“成功”返回，实际上根本没等到这一次真正的DMA完成，
-         * 读到的数据是不完整/过期的 */
-
-         /* 加上这行之后，结果导致几乎每次都失败(-2/-3)，
-          * 怀疑是这行内部把SPI外设本身也关掉了，导致或许大量阻塞式单字节收发全部失效；
-          * 先撤回，回到只有排空信号量这一步，隔离变量重新验证是不是这一行导致的问题 */
-        // HAL_SPI_DMAStop(&hspi2);
         return -3;      // 超时
     }
 
@@ -218,17 +208,6 @@ int8_t BSP_SD_Init(void)
     return 0;
 }
 
-// TODO调试专用：逐字节阻塞版本，跟DMA版本对比耗时，验证是不是DMA突发时序在跟卡较劲
-static int8_t SD_SPI_Blocking_Read512(uint8_t *buf)
-{
-    uint32_t start_tick = osKernelGetTickCount();
-    for (int i = 0; i < 512; i++)
-    {
-        buf[i] = SD_SPI_RWByte(0xFF);
-    }
-    return 0;
-}
-
 /**
  * @brief   读取单个512字节Block(全程走DMA)
  * @note    寻址逻辑：SDHC卡block参数直接当Block号；SDSC卡内部转换为字节地址(Blcok*512)。
@@ -272,11 +251,6 @@ int8_t BSP_SD_ReadBlock(uint32_t block, uint8_t *buf)
         SD_CS_High();
         return -3;
     }
-//    if(SD_SPI_Blocking_Read512(buf) != 0)
-//    {
-//        SD_CS_High();
-//        return -3;
-//    }
 
     SD_SPI_RWByte(0xFF);    // CRC1
     SD_SPI_RWByte(0xFF);    // CRC2
