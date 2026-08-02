@@ -11,7 +11,7 @@
 #define VBAT_LOW_WARNING_THRESHOLD 14.0f // 早期预警阈值，跟触发disarm的13.2V是两回事，只提示不动作
 #define VBAT_LOW_WARNING_RECOVER 14.2f // 迟滞：回升到此值以上才允许下次再报警，防止临界点反复提示
 
-#define CRITICAL_BATTERY_REPOST_MS 1000U // 持续报警重发间隔，需大于EVT_CRITICAL_BATTERY节拍自身播放时长(约740ms)
+#define CRITICAL_BATTERY_REPOST_MS 1500U // 持续报警重发间隔，需大于EVT_CRITICAL_BATTERY节拍自身播放时长(约740ms)
 
 #define TASK_PM_PERIOD_MS 100U
 
@@ -40,7 +40,7 @@ void App_PowerMonit_Task(void *argument)
             if(low_count < VBAT_FAULT_CONFIRM_COUNT)
                 low_count++;
             
-            if(low_count > VBAT_FAULT_CONFIRM_COUNT)
+            if(low_count >= VBAT_FAULT_CONFIRM_COUNT)
             {
                 if (!g_power_health.voltage_fault)          // 跳边沿才记，持续锁存期间不用重复写
                     BB_LogVoltageFault(osKernelGetTickCount());

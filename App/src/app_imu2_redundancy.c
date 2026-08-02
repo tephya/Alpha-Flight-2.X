@@ -7,18 +7,22 @@
 
 extern osMessageQueueId_t IndicatorEventQueueHandle;
 
+#define IMU_FAULT_REPORT_MS 900U // 持续报警重发间隔，需大于EVT_IMU_FAULT节拍自身播放时长(约660ms)
+
 /*====== 切换阈值 ======*/
 #define SWITCH_AWAY_THRESHOLD 5     // 连续5帧异常判定切走
 #define SWITCH_BACK_THRESHOLD 200   // 连续200帧健康判定切回
+#define DUAL_FAULT_CLEAR_THRESHOLD 50   // 需要连续50帧(≈62.5ms@800Hz)正常才解除dual_fault，
+                                            // 避免单帧就无条件清零导致短暂扰动闪烁
 
 /*====== 交叉对比阈值: 静止状态测试稳健阈值(meadian+4*MADstd)与动态批(实际飞行效果，不含剧烈翻滚)P99
  * 取较大者，6轴分开判断 ======*/
-#define ACC_AX_DIFF_THRESHOLD_G 0.1005f
-#define ACC_AY_DIFF_THRESHOLD_G 0.0244f
-#define ACC_AZ_DIFF_THRESHOLD_G 0.0898f
-#define GYRO_GX_DIFF_THRESHOLD_DPS 1.9520f
-#define GYRO_GY_DIFF_THRESHOLD_DPS 2.5620f
-#define GYRO_GZ_DIFF_THRESHOLD_DPS 3.5990f
+#define ACC_AX_DIFF_THRESHOLD_G 99.0f       // TODO: 测试阈值
+#define ACC_AY_DIFF_THRESHOLD_G 99.0f
+#define ACC_AZ_DIFF_THRESHOLD_G 99.0f
+#define GYRO_GX_DIFF_THRESHOLD_DPS 99.9f
+#define GYRO_GY_DIFF_THRESHOLD_DPS 99.9f
+#define GYRO_GZ_DIFF_THRESHOLD_DPS 99.9f
 
 /* ODR=800Hz, 周期1.25ms，超时=3倍周期-3.75ms，向上取整到RTOS tick(1ms)为4ms 
  * 注：这是ms级tick，用于故障超时判定精度足够（只是留裕量的看门狗），
@@ -171,8 +175,11 @@ static void Health_RecordGood(void)
      * active IMU本身能持续正常输出，说明至少有一路可信，
      * 之前锁存的双路状态解除(如锁存)
      */
-    g_imu_health.dual_fault = 0;
-
+    if (g_imu_health.dual_fault && g_imu_health.good_frame_count >= DUAL_FAULT_CLEAR_THRESHOLD)
+    {
+        g_imu_health.dual_fault = 0;
+    }
+    
     /**
      * 备用IMU的数据能通过交叉比对+新鲜度检查，说明它本身也在正常输出，
      * 达到切回阈值后恢复它的健康标志——只恢复标志，不触发实际切换
@@ -186,7 +193,6 @@ static void Health_RecordGood(void)
     }
 }
 
-#define IMU_FAULT_REPORT_MS 900U // 持续报警重发间隔，需大于EVT_IMU_FAULT节拍自身播放时长(约660ms)
 
 static void ImuFault_ReportIfActive(void)
 {

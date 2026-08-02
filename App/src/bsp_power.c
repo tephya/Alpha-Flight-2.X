@@ -7,6 +7,8 @@
 // 电流采样：11.75mV/A，即除0.01175；预留，本次不参与任何判断
 #define CURRENT_ADC_TO_AMP (3.3f / 4095.0f / 0.01175f)
 
+#define ADC_POLL_TIMEOUT_MS 20U 
+
 static PowerData_t s_power = {0};
 
 void BSP_Power_Init(void)
@@ -26,11 +28,11 @@ void BSP_Power_Read(PowerData_t *out)
     HAL_ADC_Start(&hadc1);
 
     // Rank1: VBAT(ADC_CHANNEL_10)
-    HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+    HAL_ADC_PollForConversion(&hadc1, ADC_POLL_TIMEOUT_MS);
     s_power.vbat = HAL_ADC_GetValue(&hadc1) * VBAT_ADC_TO_VOLT;
 
     // Rank2: ESC(ADC_CHANNEL_11)
-    HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+    HAL_ADC_PollForConversion(&hadc1, ADC_POLL_TIMEOUT_MS);
     s_power.current = HAL_ADC_GetValue(&hadc1) * CURRENT_ADC_TO_AMP;
 
     HAL_ADC_Stop(&hadc1);

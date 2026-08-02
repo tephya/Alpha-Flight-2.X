@@ -104,7 +104,7 @@ osThreadId_t Task_IndicatorHandle;
 const osThreadAttr_t Task_Indicator_attributes = {
   .name = "Task_Indicator",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityRealtime3,
+  .priority = (osPriority_t) osPriorityRealtime4, // TODO: 调试用
 };
 /* Definitions for Task_IWDG_Feed */
 osThreadId_t Task_IWDG_FeedHandle;

@@ -11,6 +11,7 @@ extern osMessageQueueId_t IndicatorEventQueueHandle;
 #define INDICATOR_PRIO_NOTICE 1U // 纯提示：解锁/上锁/GPS定位成功
 #define INDICATOR_PRIO_WARNING 2U // 需要关注但非当下失控：低电压/SD卡满
 #define INDICATOR_PRIO_CRITICAL 3U // 安全相关，必须立刻被听到：极低压/SD错误/IMU故障/失联
+#define INDICATOR_PRIO_STATE_CHANGE 4U // 解锁/上锁提示音，必须无条件优先于一切警告
 
 typedef struct
 {
@@ -51,30 +52,30 @@ static const IndicatorPattern_t *Indicator_GetPattern(IndicatorEvent_t evt)
     {
         static const IndicatorPattern_t pat = {s_pat_armed,
                                                1,
-                                               INDICATOR_PRIO_NOTICE};
+                                               INDICATOR_PRIO_STATE_CHANGE};
         return &pat;
     }
     case EVT_DISARMED:
     {
         static const IndicatorPattern_t pat = {s_pat_disarmed,
                                                2,
-                                               INDICATOR_PRIO_NOTICE};
+                                               INDICATOR_PRIO_STATE_CHANGE};
         return &pat;
     }
-    // case EVT_LOW_BATTERY:
-    // {
-    //     static const IndicatorPattern_t pat = {s_pat_low_battery,
-    //                                            3,
-    //                                            INDICATOR_PRIO_WARNING};
-    //     return &pat;
-    // }
-    // case EVT_CRITICAL_BATTERY:
-    // {
-    //     static const IndicatorPattern_t pat = {s_pat_critical_battery,
-    //                                            5,
-    //                                            INDICATOR_PRIO_CRITICAL};
-    //     return &pat;
-    // }
+    case EVT_LOW_BATTERY:
+    {
+        static const IndicatorPattern_t pat = {s_pat_low_battery,
+                                               3,
+                                               INDICATOR_PRIO_WARNING};
+        return &pat;
+    }
+    case EVT_CRITICAL_BATTERY:
+    {
+        static const IndicatorPattern_t pat = {s_pat_critical_battery,
+                                               5,
+                                               INDICATOR_PRIO_CRITICAL};
+        return &pat;
+    }
     // case EVT_GPS_FIX_ACQUIRED:
     // {
     //     static const IndicatorPattern_t pat = {s_pat_gps_fix,
@@ -169,6 +170,9 @@ void App_Indicator_Task(void *argument)
         while(Indicator_PlayPattern(pat, &preempt_evt))
         {
             evt = preempt_evt;  // 被打断，紧接着播放打断它的那个事件；如果那个又被更高优先级打断，继续循环
+            pat = Indicator_GetPattern(evt);
+            if(pat == NULL)
+                break;          // GatPattern已经在PlayPatten内部过滤过NULL，防御性兜底
         }
     }
 }

@@ -24,6 +24,9 @@ volatile ArmState_t g_arm_state = ARM_STATE_DISARMED;
 
 static bool s_disarmed_hold_active = false;
 static uint32_t s_disarmed_hold_start_tick = 0;
+static bool s_switch_was_on = false;    // 记录上一次采样时开关状态，用于边沿检测：
+                                            // 紧急disarm后若开关仍停留在ON档，不允许电平直接重新解锁
+                                            // 必须先见到OFF、再见到ON这个跳变才放行
 
 /**
  * @brief   ARM状态机初始化，上电默认Disarmed
@@ -32,6 +35,7 @@ void Arm_Init(void)
 {
     g_arm_state = ARM_STATE_DISARMED;
     s_disarmed_hold_active = false;
+    s_switch_was_on = false;
 }
 
 static bool Arm_SwitchOn(const RCChannelData_t *rc)
@@ -65,13 +69,19 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas)
     if(g_arm_state == ARM_STATE_DISARMED)
     {
         s_disarmed_hold_active = false;     // Disarmed期间不需要计时
+
+        bool switch_on_now = Arm_SwitchOn(rc);
+        bool switch_rising_edge = switch_on_now && !s_switch_was_on;
+        s_switch_was_on = switch_on_now;        // 无论后面是否放行解锁，边沿记录都要更新，
+                                                    // 否则未就绪期间的真实跳变会被漏记
+
 #if !DEBUG_SKIP_ARM_READY_CHECK
         if (osEventFlagsGet(SystemReadyEventGroupHandle) != SYSREADY_ARM_MASK)
         {
             return;         // 系统未就绪(GPS/MAG/VBAT/RC_rssi/IMU_health任一未达标)，禁止解锁
         }
 #endif
-        if(Arm_SwitchOn(rc) && Arm_ThrottleLow(rc) && Arm_TiltOk(roll_meas, pitch_meas))
+        if(switch_rising_edge && Arm_ThrottleLow(rc) && Arm_TiltOk(roll_meas, pitch_meas))
         {
             g_arm_state = ARM_STATE_ARMED;
             BB_LogArmChanged(osKernelGetTickCount(), ARM_STATE_ARMED);
