@@ -57,6 +57,10 @@ typedef struct
 typedef struct
 {
     bool voltage_fault;     // true=持续低压已确定，供Arm_Update做紧急disarm判据
+    
+    bool current_limiting;      // 0=未触发限流保护，1=正在压低油门
+    uint16_t current_limit_permille;    // 油门缩放比例，600~1000对应60%~100%
+    float current_filtered_a;           // 滤波后的整机总电流，仅用于监视和记录
 } PowerHealth_t;
 
 
@@ -76,6 +80,7 @@ typedef enum
     EVT_SD_CARD_ERROR = 5,              // 读写SD卡出错
     EVT_IMU_FAULT = 6,                  // IMU通信错误
     EVT_RC_LOST = 7,                    // 遥控信号丢失，持续报警
+    EVT_CURRENT_LIMITING = 8,           // 过流保护中
 } IndicatorEvent_t;
 
 typedef enum

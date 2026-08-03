@@ -6,7 +6,7 @@
 #include <stdbool.h>
 
 void Arm_Init(void);
-void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas);
-bool TiltProtection_Check(float roll_meas, float pitch_meas);
+void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas, float dt);
+void Arm_ForceDisarm(void);
 
 #endif

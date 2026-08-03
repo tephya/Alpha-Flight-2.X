@@ -10,4 +10,9 @@ volatile ImuHealthStatus_t g_imu_health = {
 };
 
 volatile SystemHeartbeat_t g_heartbeat = {0};
-volatile PowerHealth_t g_power_health = {0};
+volatile PowerHealth_t g_power_health = {
+    .voltage_fault = false,
+    .current_limiting = false,
+    .current_limit_permille = 1000U,
+    .current_filtered_a = 0.0f
+};

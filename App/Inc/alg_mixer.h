@@ -7,6 +7,8 @@
  * 目的是给姿态控制留出比油门量程更大的调整裕量*/
 #define MIXER_OUTPUT_LIMIT 1352.0f
 
+#define MIXER_OUTPUT_IDLE 110U
+
 void Mixer(float roll_cmd,
            float pitch_cmd,
            float yaw_cmd,

@@ -9,9 +9,10 @@ extern osMessageQueueId_t IndicatorEventQueueHandle;
 
 /*======= 低优先级分档：数值越大越优先，只有严格更高优先级的新事件才能打断当前正在播放的节拍 =======*/
 #define INDICATOR_PRIO_NOTICE 1U // 纯提示：解锁/上锁/GPS定位成功
-#define INDICATOR_PRIO_WARNING 2U // 需要关注但非当下失控：低电压/SD卡满
-#define INDICATOR_PRIO_CRITICAL 3U // 安全相关，必须立刻被听到：极低压/SD错误/IMU故障/失联
-#define INDICATOR_PRIO_STATE_CHANGE 4U // 解锁/上锁提示音，必须无条件优先于一切警告
+#define INDICATOR_PRIO_WARNING 2U // 需要关注但非当下失控：低电压
+#define INDICATOR_PRIO_POWER_LIMIT 3U   // 过流保护
+#define INDICATOR_PRIO_CRITICAL 4U      // 安全相关，必须立刻被听到：极低压/SD错误/IMU故障/失联
+#define INDICATOR_PRIO_STATE_CHANGE 5U  // 解锁/上锁提示音，必须无条件优先于一切警告
 
 typedef struct
 {
@@ -35,7 +36,7 @@ static const BeepStep_t s_pat_gps_fix[] = {{50, 50}, {50, 50}, {50, 0}};        
 static const BeepStep_t s_pat_sd_error[] = {{400, 200}, {400, 0}};              // 两声长鸣，区别于低压警告
 static const BeepStep_t s_pat_imu_fault[] = {{60, 60}, {60, 60}, {60, 60}, {60, 60}, {60, 60}, {60, 0}};        // 六连急促
 static const BeepStep_t s_pat_rc_lost[] = {{600, 200}, {600, 200}, {600, 0}};       // 三声长鸣，最沉稳但最不能忽略
-
+static const BeepStep_t s_pat_current_limiting[] = {{100, 80}, {100, 80}, {400, 80}};   // 三声，两短一长
 
 /**
  * @brief   按事件类型返回对应节拍
@@ -76,13 +77,13 @@ static const IndicatorPattern_t *Indicator_GetPattern(IndicatorEvent_t evt)
                                                INDICATOR_PRIO_CRITICAL};
         return &pat;
     }
-    // case EVT_GPS_FIX_ACQUIRED:
-    // {
-    //     static const IndicatorPattern_t pat = {s_pat_gps_fix,
-    //                                            3,
-    //                                            INDICATOR_PRIO_NOTICE};
-    //     return &pat;
-    // }
+    case EVT_GPS_FIX_ACQUIRED:
+    {
+        static const IndicatorPattern_t pat = {s_pat_gps_fix,
+                                               3,
+                                               INDICATOR_PRIO_NOTICE};
+        return &pat;
+    }
 
     case EVT_SD_CARD_ERROR:
     {
@@ -91,20 +92,27 @@ static const IndicatorPattern_t *Indicator_GetPattern(IndicatorEvent_t evt)
                                                INDICATOR_PRIO_CRITICAL};
         return &pat;
     }
-    // case EVT_IMU_FAULT:
-    // {
-    //     static const IndicatorPattern_t pat = {s_pat_imu_fault,
-    //                                            6,
-    //                                            INDICATOR_PRIO_CRITICAL};
-    //     return &pat;
-    // }
-    // case EVT_RC_LOST:
-    // {
-    //     static const IndicatorPattern_t pat = {s_pat_rc_lost,
-    //                                            3,
-    //                                            INDICATOR_PRIO_CRITICAL};
-    //     return &pat;
-    // }
+    case EVT_IMU_FAULT:
+    {
+        static const IndicatorPattern_t pat = {s_pat_imu_fault,
+                                               6,
+                                               INDICATOR_PRIO_CRITICAL};
+        return &pat;
+    }
+    case EVT_RC_LOST:
+    {
+        static const IndicatorPattern_t pat = {s_pat_rc_lost,
+                                               3,
+                                               INDICATOR_PRIO_CRITICAL};
+        return &pat;
+    }
+    case EVT_CURRENT_LIMITING:
+    {
+        static const IndicatorPattern_t pat = {s_pat_current_limiting,
+                                             3,
+                                             INDICATOR_PRIO_POWER_LIMIT};
+        return &pat;
+    }
     default:
         return NULL;        // 不认识的事件值，调用方需检查NULL
     }

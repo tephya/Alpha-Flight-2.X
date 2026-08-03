@@ -104,7 +104,7 @@ osThreadId_t Task_IndicatorHandle;
 const osThreadAttr_t Task_Indicator_attributes = {
   .name = "Task_Indicator",
   .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityRealtime4, // TODO: 调试用
+  .priority = (osPriority_t) osPriorityRealtime4,
 };
 /* Definitions for Task_IWDG_Feed */
 osThreadId_t Task_IWDG_FeedHandle;
@@ -312,11 +312,11 @@ void StartTask_Nav(void *argument)
 {
   /* USER CODE BEGIN StartTask_Nav */
   /* Infinite loop */
-  // App_Nav_Task(argument);
-  for (;;)
-  {
-    osDelay(1);
-  }
+  App_Nav_Task(argument);
+  // for (;;)
+  // {
+  //   osDelay(1);
+  // }
   /* USER CODE END StartTask_Nav */
 }
 
@@ -368,11 +368,11 @@ void StartTask_PowerMonitor(void *argument)
 {
   /* USER CODE BEGIN StartTask_PowerMonitor */
   /* Infinite loop */
-  // App_PowerMonit_Task(argument);
-  for (;;)
-  {
-    osDelay(1);
-  }
+  App_PowerMonit_Task(argument);
+  // for (;;)
+  // {
+  //   osDelay(1);
+  // }
   /* USER CODE END StartTask_PowerMonitor */
 }
 
@@ -406,7 +406,11 @@ void StartTask_IWDG(void *argument)
 {
   /* USER CODE BEGIN StartTask_IWDG */
   /* Infinite loop */
-  App_IwdgFeed_Task(argument);
+  // App_IwdgFeed_Task(argument);
+  for (;;)
+  {
+    osDelay(1);
+  }
   /* USER CODE END StartTask_IWDG */
 }
 

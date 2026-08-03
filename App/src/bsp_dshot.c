@@ -101,13 +101,16 @@ void BSP_DSHOT_Send(uint16_t p1, uint16_t p2, uint16_t p3, uint16_t p4)
      * 远小于800Hz(1.25ms)控制周期，正常情况这里不会真的碰到BUSY，
      * 只是给异常场景留个非阻塞的兜底，不采用旧代码那种忙等到DMA停稳的写法
      */
-    if(HAL_DMA_GetState(htim1.hdma[TIM_DMA_ID_UPDATE]) == HAL_DMA_STATE_BUSY)
+    if(htim1.DMABurstState != HAL_DMA_STATE_READY)
     {
         HAL_TIM_DMABurst_WriteStop(&htim1, TIM_DMA_UPDATE);
     }
 
-    HAL_TIM_DMABurst_MultiWriteStart(&htim1, TIM_DMABASE_CCR1, TIM_DMA_UPDATE,
+    if(HAL_TIM_DMABurst_MultiWriteStart(&htim1, TIM_DMABASE_CCR1, TIM_DMA_UPDATE,
                                      (uint32_t *)s_dshot_buf,
                                      TIM_DMABURSTLENGTH_4TRANSFERS,
-                                     DSHOT_FRAME_LEN * DSHOT_CHANNELS);
+                                     DSHOT_FRAME_LEN * DSHOT_CHANNELS) != HAL_OK)
+    {
+        // TODO: 计数或丢进心跳/黑匣子，统计实际丢帧率，方便以后判断这条链路的健康度
+    }
 }

@@ -97,7 +97,7 @@ float Map_Roll(uint16_t ch)
 
 float Map_Pitch(uint16_t ch)
 {
-    return (ch - 991.5f) / 819.5f * 30.0f;
+    return -(ch - 991.5f) / 819.5f * 30.0f;
 }
 
 float Map_Yaw(uint16_t ch)
@@ -107,5 +107,12 @@ float Map_Yaw(uint16_t ch)
 
 uint16_t Map_Throttle(uint16_t ch)
 {
-    return (uint16_t)((ch - 172) / 1639.0f * ALG_THROTTLE_MAX);
+    if(ch <= 172U)
+        return 0U;
+    
+    if(ch >= 1811U)
+        return (uint16_t)ALG_THROTTLE_MAX;
+
+    return (uint16_t)((float)((ch - 172) / 1639.0f) 
+                        * ALG_THROTTLE_MAX);
 }
