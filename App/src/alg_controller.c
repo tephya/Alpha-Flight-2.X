@@ -38,8 +38,11 @@ void AngleController_Update(float roll_target,
 /*========== 角速度控制器(PID内环) ==========*/
 void RateController_Init(void)
 {
-    PID_Init(&rate_controller.roll,  1.00f, 0.05f, 0.015f, 250.0f);
-    PID_Init(&rate_controller.pitch, 1.00f, 0.05f, 0.015f, 250.0f);
+    /* 诊断阶段先使用P-only并限制最大姿态修正
+     * 防止再次失稳时Mixer产生过大的电机差动。 */
+    PID_Init(&rate_controller.roll,  0.50f, 0.00f, 0.000f, 120.0f);
+    PID_Init(&rate_controller.pitch, 0.50f, 0.00f, 0.000f, 120.0f);
+    /* Yaw暂时保持原参数，本轮主要定位Roll/Pitch振荡。 */
     PID_Init(&rate_controller.yaw,   2.00f, 0.10f, 0.000f, 200.0f);
 }
 

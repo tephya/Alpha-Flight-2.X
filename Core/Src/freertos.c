@@ -406,11 +406,11 @@ void StartTask_IWDG(void *argument)
 {
   /* USER CODE BEGIN StartTask_IWDG */
   /* Infinite loop */
-  // App_IwdgFeed_Task(argument);
-  for (;;)
-  {
-    osDelay(1);
-  }
+  App_IwdgFeed_Task(argument);
+  // for (;;)
+  // {
+  //   osDelay(1);
+  // }
   /* USER CODE END StartTask_IWDG */
 }
 

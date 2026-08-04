@@ -2,7 +2,7 @@
 #include "tim.h"
 
 #define BUZZER_FREQ_HZ 2048U // 无源蜂鸣器谐振频率2.048KHz(根据实际情况调整)
-#define BUZZER_DUTY_PERCENT 1U // 音量大小调整入口(50U时音量最大，左右递增或递减音量会削减)
+#define BUZZER_DUTY_PERCENT 15U // 音量大小调整入口(50U时音量最大，左右递增或递减音量会削减)
 
 extern TIM_HandleTypeDef htim3;
 
@@ -29,7 +29,7 @@ void BSP_Buzzer_Init(void)
 
     TIM3->PSC = 0U;
     TIM3->ARR = (uint16_t)(period_ticks - 1U);
-    TIM3->CCR2 = (uint16_t)(period_ticks * BUZZER_DUTY_PERCENT/ 400U);
+    TIM3->CCR2 = (uint16_t)(period_ticks * BUZZER_DUTY_PERCENT/ 100U);
 
     /**
      * 手动产生一次Update事件，把上面写的PSC/ARR/CCR立即从预装载寄存器刷进影子寄存器生效

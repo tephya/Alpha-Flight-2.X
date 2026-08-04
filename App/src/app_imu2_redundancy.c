@@ -30,9 +30,70 @@ extern osMessageQueueId_t IndicatorEventQueueHandle;
 #define ICM_DRDY_WAIT_TIMEOUT_MS 4
 static const float MAX_AGE_S = 3.0f / ICM_ODR_HZ;
 
-/*--------------- DWT高精度计时，用于测量真实dt -----------------*/
-static uint32_t s_last_cycle = 0;
-static bool s_dwt_inited = false;
+typedef enum
+{
+    ACTIVE_DT_OK = 0,
+    ACTIVE_DT_DUPLICATE,
+    ACTIVE_DT_ANOMALY
+} ActiveDtResult_t;
+
+static uint32_t s_last_active_cycle;
+static uint8_t s_last_active_sel = 0xFFU;
+static bool s_active_timestamp_valid;
+
+/**
+ * @brief   根据active IMU读取时间戳计算控制周期
+ * @param   active_sel  当前active IMU编号，0=IMU1，1=IMU2
+ * @param   timestamp_cycle active IMU本次缓存的DWT Cycle时间戳
+ * @param   dt_s    输出控制周期，单位秒
+ * @retval  ACTIVE_DT_OK    active产生新帧且时间间隔可信
+ * @retval  ACTIVE_DT_DUPLICATE active时间戳未变化，本次仅standby刷新
+ * @retval  ACTIVE_DT_ANOMALY   active产生新帧，但时间间隔超出可信范围
+ *
+ */
+static ActiveDtResult_t ActiveFrame_GetDt(uint8_t active_sel, uint32_t timestamp_cycle, float *dt_s)
+{
+    const float nominal_dt = 1.0f / (float)ICM_ODR_HZ;
+
+    // IMU切换后的第一帧不跨传感器计算dt
+    if(active_sel != s_last_active_sel)
+    {
+        s_last_active_sel = active_sel;
+        s_active_timestamp_valid = false;
+    }
+
+    if(!s_active_timestamp_valid)
+    {
+        s_last_active_cycle = timestamp_cycle;
+        s_active_timestamp_valid = true;
+        *dt_s = nominal_dt;
+        return ACTIVE_DT_OK;
+    }
+
+    uint32_t delta_cycle = timestamp_cycle - s_last_active_cycle;
+
+    // 时间戳没变化，说明仍是上一次active IMU缓存
+    if(delta_cycle == 0U)
+    {
+        return ACTIVE_DT_DUPLICATE;
+    }
+
+    /* 无论本帧dt是否异常，都更新基准
+     * 否则下一帧还会继续包含这段异常间隔 */
+    s_last_active_cycle = timestamp_cycle;
+
+    float measured_dt = (float)delta_cycle / (float)SystemCoreClock;
+
+    // 正常800Hz约为1.25ms；允许偶发丢帧，不继续使用原来的±20%限制
+    if((measured_dt < 0.0005f) || (measured_dt > 0.0050f))
+    {
+        *dt_s = nominal_dt;
+        return ACTIVE_DT_ANOMALY;
+    }
+
+    *dt_s = measured_dt;
+    return ACTIVE_DT_OK;
+}
 
 /**
  * @brief   开启内核里的DWT Cycle Counter(CPU周期计数器)
@@ -45,36 +106,7 @@ static void DWT_Init(void)
     // 清零DWT内部的32位向上计数器
     DWT->CYCCNT = 0;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-    s_dwt_inited = true;
 }
-
-/**
- * @brief   返回距上次调用的真实间隔（秒），并做钳位：超出标称周期±20%视为调度异常帧
- * @note    用标称周期兜底而不是把失真的dt直接喂给PID
- */
-static float DWT_MeasureDt(void)
-{
-    if(!s_dwt_inited){
-        DWT_Init();
-        s_last_cycle = DWT->CYCCNT;
-        return 1.0f / ICM_ODR_HZ;       // 第一次调用没有上次基准，返回标称值
-    }
-
-    uint32_t now = DWT->CYCCNT;
-    uint32_t delta_cycles = now - s_last_cycle;     // 依赖无符号溢出自动处理，168MHz下约25s绕回一次
-
-    s_last_cycle = now;
-
-    float dt = (float)delta_cycles / (float)SystemCoreClock;        // x * T
-
-    const float nominal = 1.0f / ICM_ODR_HZ;        // 前后两次控制环执行间隔时间经验值（后续可调整）
-    const float lo = nominal * 0.8f;
-    const float hi = nominal * 1.2f;
-    if(dt < lo || dt > hi){             // 如果实测值不在这个经验值±20%上波动，
-        dt = nominal;
-    }
-    return dt;
-} 
 
 /**
  * @brief   交叉验证两个ICM测量的数据，判断提供姿态角的传感器是否出现异常
@@ -218,6 +250,10 @@ static void ImuFault_ReportIfActive(void)
 void ImuRedundancy_Init(void)
 {
     DWT_Init();
+
+    s_last_active_cycle = 0U;
+    s_last_active_sel = 0xFFU;
+    s_active_timestamp_valid = false;
 }
 
 /**
@@ -232,8 +268,13 @@ void ImuRedundancy_Init(void)
  * @retval  true=本帧数据有效可用于结算
  *          false=本帧超时/双路失效，调用方应跳过本次解算
  */
-bool ImuRedundancy_Update(IcmData_t *out, float *dt_s)
+ImuUpdateResult_t ImuRedundancy_Update(IcmData_t *out, float *dt_s, uint8_t *fresh_flags)
 {
+    if((out == NULL) || (dt_s == NULL))
+    {
+        return IMU_UPDATE_TIMEOUT;
+    }
+
     uint32_t evt = osEventFlagsWait(g_icmDataReadyEvtId,
                                     ICM1_DRDY_FLAG | ICM2_DRDY_FLAG,
                                     osFlagsWaitAny,
@@ -241,10 +282,24 @@ bool ImuRedundancy_Update(IcmData_t *out, float *dt_s)
     
     if((int32_t)evt < 0)    // CMSIS-RTOS2: 负值为错误码，osFlagsErrorTimeout即超时
     {
+        if (fresh_flags != NULL)
+        {
+            *fresh_flags = 0U;
+        }
+
         Health_RecordBad();     // 两路都没等到，算一次中断型异常，计入统一计数器
         ImuFault_ReportIfActive();
-        *dt_s = DWT_MeasureDt();
-        return false;
+
+        return g_imu_health.dual_fault
+                   ? IMU_UPDATE_DUAL_FAULT
+                   : IMU_UPDATE_TIMEOUT;
+    }
+
+    uint8_t fresh = (uint8_t)(evt & (ICM1_DRDY_FLAG | ICM2_DRDY_FLAG));
+
+    if(fresh_flags != NULL)
+    {
+        *fresh_flags = fresh;
     }
 
     IcmData_t d1, d2;
@@ -279,7 +334,28 @@ bool ImuRedundancy_Update(IcmData_t *out, float *dt_s)
     }
 
     ImuFault_ReportIfActive();
-    *out = (g_imu_health.active_imu_sel == 0) ? d1 : d2;
-    *dt_s = DWT_MeasureDt();
-    return true;
+
+    if(g_imu_health.dual_fault)
+    {
+        return IMU_UPDATE_DUAL_FAULT;
+    }
+
+    uint8_t active_sel = g_imu_health.active_imu_sel;
+    const IcmData_t *active_data = (active_sel == 0U) ? &d1 : &d2;
+
+    ActiveDtResult_t dt_result = ActiveFrame_GetDt(active_sel, active_data->timestamp_cycle, dt_s);
+
+    if(dt_result == ACTIVE_DT_DUPLICATE)
+    {
+        return IMU_UPDATE_STANDBY_ONLY;
+    }
+
+    *out = *active_data;
+
+    if(dt_result == ACTIVE_DT_ANOMALY)
+    {
+        return IMU_UPDATE_TIMING_ANOMALY;
+    }
+    
+    return IMU_UPDATE_ACTIVE_FRAME;
 }

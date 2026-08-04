@@ -108,7 +108,16 @@ int main(void)
   MX_USART2_UART_Init();
   MX_IWDG_Init();
   /* USER CODE BEGIN 2 */
+  BSP_DSHOT_Init();
 
+  osDelay(5000);
+  // ESC上电握手：持续发0油门，让ESC完成自检
+  for (int i = 0; i < 3000; i++)
+  {
+    BSP_DSHOT_Send(0, 0, 0, 0);
+    HAL_IWDG_Refresh(&hiwdg);
+    osDelay(1);
+  }
   /* USER CODE END 2 */
 
   /* Init scheduler */

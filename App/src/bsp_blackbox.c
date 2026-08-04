@@ -6,7 +6,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#define LOG_BUF_SIZE 512U
+/* 200Hz CONTROL日志约14.6KB/s。4KB双缓冲可吸收约560ms的SD卡短时停顿，
+ * 同时使用整扇区倍数写盘，减少512-byte双缓冲过小导致的瞬时溢出。 */
+#define LOG_BUF_SIZE 4096U
 
 /*====== 各记录类型的实际大小(含MAGIC + type + 内容), __packed保证紧凑 ======*/
 typedef __packed struct
@@ -41,6 +43,14 @@ typedef __packed struct
     uint16_t time_ms;
     uint8_t new_active_imu;
 } BB_ImuSwitchRec_t;    // total = 5Bytes
+
+typedef __packed struct
+{
+    uint8_t magic;
+    uint8_t type;
+    BB_ControlData_t data;
+} BB_ControlRec_t;
+
 
 /*====== 双缓冲消费状态(内部私有) ======*/
 typedef enum
@@ -96,10 +106,17 @@ static int8_t BB_PublishCurrentBlock(void)
 }
 
 /**
- * @brief   把一条记录的原始字节写入当前缓冲区，跨512字节边界自动触发Publish
+ * @brief   把一条记录的原始字节写入当前缓冲区，跨缓冲区边界自动触发Publish
+ * @note    Publish失败时回滚本条记录已写入的部分，保证文件中不会留下残帧。
+ *          当前所有记录均小于LOG_BUF_SIZE，因此一次记录最多跨越一个边界。
  */
 static int8_t BB_WriteBytes(const uint8_t *src, uint16_t len)
 {
+    if(src == NULL || len > LOG_BUF_SIZE)
+        return -1;
+
+    const uint8_t start_index = s_fillIndex;
+    const uint16_t start_pos = s_buf[start_index].pos;
     uint16_t remaining = len;
     
     while(remaining > 0)
@@ -116,7 +133,12 @@ static int8_t BB_WriteBytes(const uint8_t *src, uint16_t len)
         if(s_buf[s_fillIndex].pos == LOG_BUF_SIZE)
         {
             if(BB_PublishCurrentBlock() != 0)
+            {
+                /* Publish失败时fillIndex尚未切换，撤销本条记录已复制的部分。
+                 * 旧记录仍保持完整，下一次写入会从start_pos覆盖本次残留字节。 */
+                s_buf[start_index].pos = start_pos;
                 return -1;
+            }
         }
     }
     return 0;
@@ -220,6 +242,17 @@ int8_t BB_LogVoltageFault(uint16_t time_ms)
 int8_t BB_LogImuSwitch(uint16_t time_ms, uint8_t new_active_imu)
 {
     BB_ImuSwitchRec_t rec = {BB_FRAME_MAGIC, BB_REC_IMU_SWITCH, time_ms, new_active_imu};
+    return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));
+}
+
+int8_t BB_LogControl(const BB_ControlData_t *data)
+{
+    BB_ControlRec_t rec;
+
+    rec.magic = BB_FRAME_MAGIC;
+    rec.type = BB_REC_CONTROL;
+    rec.data = *data;
+
     return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));
 }
 

@@ -14,6 +14,7 @@
 #define VBAT_LOW_WARNING_RECOVER 14.2f // 迟滞：回升到此值以上才允许下次再报警，防止临界点反复提示
 
 /*================================ 过流检测宏 ====================================*/
+#define CURRENT_LIMITER_ENABLED 0U       // 带桨测试期间暂时旁路；电流采样校准后改回1U
 #define CURRENT_LIMIT_A 44.0f           // 2200mAh、25C电池理论持续电流约为55A。44A约为其80%
                                         
 #define CURRENT_LIMIT_MIN_SCALE 0.60f   // 最多把collective throttle压到60%，避免导致飞行器直接失去维持高度和姿态的能力
@@ -35,7 +36,9 @@ static bool s_critical_battery_was_active = false;  // CRITICAL_BATTERY持续报
 static uint32_t s_critical_battery_last_repost_tick = 0;
 
 static float s_current_filtered = 0.0f;
+#if CURRENT_LIMITER_ENABLED != 0U
 static float s_current_scale = 1.0f;
+#endif
 static bool s_current_initialized = false;
 static bool s_current_limit_reported = false;   // 本轮持续限流是否已经成功投递过提示
                                                     // 队列满导致投递失败时保持false，下一周期继续尝试
@@ -73,6 +76,13 @@ static void CurrentLimiter_Update(float current)
             alpha * (current - s_current_filtered);
     }
 
+    /* 暂停CurrentLimiter时仍保留电流滤波和黑匣子记录，便于校准采样链路；
+     * 对FlightCtrl始终发布100%，确保本次测试不会因错误电流读数缩放油门。 */
+#if CURRENT_LIMITER_ENABLED == 0U
+    g_power_health.current_limit_permille = 1000U;
+    g_power_health.current_limiting = false;
+    g_power_health.current_filtered_a = s_current_filtered;
+#else
     float target_scale = 1.0f;      // 默认不限制油门
 
     /**
@@ -110,6 +120,7 @@ static void CurrentLimiter_Update(float current)
     g_power_health.current_limiting = (g_power_health.current_limit_permille < 995U);
     // 保存滤波值
     g_power_health.current_filtered_a = s_current_filtered;
+#endif
 }
 
 static void CurrentLimitIndicator_Update(void)

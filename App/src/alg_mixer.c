@@ -13,16 +13,17 @@ void Mixer(float roll_cmd,
            float pitch_cmd,
            float yaw_cmd,
            uint16_t throttle,
+           uint8_t airmode_enabled,
            uint16_t *m1,
            uint16_t *m2,
            uint16_t *m3,
            uint16_t *m4)
 {
     float correction[4] ={
-        -pitch_cmd - roll_cmd - yaw_cmd,
-        pitch_cmd - roll_cmd + yaw_cmd,
-        -pitch_cmd + roll_cmd + yaw_cmd,
-        pitch_cmd + roll_cmd - yaw_cmd
+        -pitch_cmd - roll_cmd + yaw_cmd,
+        pitch_cmd - roll_cmd - yaw_cmd,
+        -pitch_cmd + roll_cmd - yaw_cmd,
+        pitch_cmd + roll_cmd + yaw_cmd
     };
 
     float correction_min = correction[0];
@@ -52,16 +53,35 @@ void Mixer(float roll_cmd,
         correction_max *= scale;
     }
 
-    /* Airmode去饱和：在不改变电机间差异的情况下移动总推力。
-     * 这可以在低油门时保持姿态控制，同时使每个电机都保持在可用输出范围内 */
+    /* collective是四路电机共同的基础输出。
+     * 最终每路输出 = collective + 对应姿态修正量。 */
     float collective = (float)throttle;
-    const float collective_min = MIXER_OUTPUT_IDLE - correction_min;
-    const float collective_max = MIXER_OUTPUT_LIMIT - correction_max;
 
-    if(collective < collective_min)
-        collective = collective_min;
-    if(collective > collective_max)
-        collective = collective_max;
+    if(airmode_enabled)
+    {
+        /* Airmode去饱和：
+         * 允许整体移动collective，以完整保留电机之间的姿态差动。
+         * 
+         * 例如某路修正为-700，为保证该路不低于110
+         * collective会被提高为810 */
+        const float collective_min = MIXER_OUTPUT_IDLE - correction_min;
+        const float collective_max = MIXER_OUTPUT_LIMIT - correction_max;
+
+        if (collective < collective_min)
+            collective = collective_min;
+        if (collective > collective_max)
+            collective = collective_max;
+    }
+    else
+    {
+        /* Airmode关闭时，不允许姿态修正主动抬高collective。
+         * Armed低油门只维持电机idle；若修正量导致单路越界，
+         * 由最终clamp裁剪，不再整体提高四路输出 */
+        if(collective < MIXER_OUTPUT_IDLE)
+            collective = MIXER_OUTPUT_IDLE;
+        if(collective > MIXER_OUTPUT_LIMIT)
+            collective = MIXER_OUTPUT_LIMIT;
+    }
 
     *m1 = clamp(collective + correction[0], MIXER_OUTPUT_IDLE, MIXER_OUTPUT_LIMIT);
     *m2 = clamp(collective + correction[1], MIXER_OUTPUT_IDLE, MIXER_OUTPUT_LIMIT);
