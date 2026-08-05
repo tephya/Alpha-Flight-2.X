@@ -28,15 +28,19 @@ typedef struct
 } IndicatorPattern_t;
 
 /*====== 各事件的具体节拍。数值是经验起点，装机实测听感不好分别率就调这里，不用动架构 ======*/
-static const BeepStep_t s_pat_armed[] = {{200, 0}};   // 单声长鸣，锁确认
-static const BeepStep_t s_pat_disarmed[] = {{80, 80}, {80, 0}};   // 两声短鸣
-static const BeepStep_t s_pat_low_battery[] = {{300, 150}, {300, 150}, {300, 0}};     // 三声中等
-static const BeepStep_t s_pat_critical_battery[] = {{100, 60}, {100, 60}, {100, 60}, {100, 60}, {100, 0}};    // 五连急促
+static const BeepStep_t s_pat_armed[] = {{200, 0}};                 // 单声长鸣，锁确认
+static const BeepStep_t s_pat_disarmed[] = {{80, 80}, {80, 0}};     // 两声短鸣
+static const BeepStep_t s_pat_low_battery[] = {{300, 150}, {300, 150}, {300, 0}};   // 三声中等
+static const BeepStep_t s_pat_critical_battery[] = {{100, 60}, {100, 60}, {100, 60}, {100, 60}, {100, 0}};      // 五连急促
 static const BeepStep_t s_pat_gps_fix[] = {{50, 50}, {50, 50}, {50, 0}};            // 三声轻快短
-static const BeepStep_t s_pat_sd_error[] = {{400, 200}, {400, 0}};              // 两声长鸣，区别于低压警告
+static const BeepStep_t s_pat_sd_error[] = {{400, 200}, {400, 0}};                  // 两声长鸣，区别于低压警告
 static const BeepStep_t s_pat_imu_fault[] = {{60, 60}, {60, 60}, {60, 60}, {60, 60}, {60, 60}, {60, 0}};        // 六连急促
 static const BeepStep_t s_pat_rc_lost[] = {{600, 200}, {600, 200}, {600, 0}};       // 三声长鸣，最沉稳但最不能忽略
 static const BeepStep_t s_pat_current_limiting[] = {{100, 80}, {100, 80}, {400, 80}};   // 三声，两短一长
+static const BeepStep_t s_pat_rc_cal_started[] = {{70, 70}, {70, 0}};               // 两短
+static const BeepStep_t s_pat_rc_cal_success[] = {{60, 60}, {60, 60}, {250, 0}};    // 两段一长
+static const BeepStep_t s_pat_rc_cal_failed[] = {{350, 100}, {80, 0}};      // 一长一短
+static const BeepStep_t s_pat_gyro_cal_success[] = {{50, 50}, {150, 0}};    // 短+中
 
 /**
  * @brief   按事件类型返回对应节拍
@@ -111,6 +115,34 @@ static const IndicatorPattern_t *Indicator_GetPattern(IndicatorEvent_t evt)
         static const IndicatorPattern_t pat = {s_pat_current_limiting,
                                              3,
                                              INDICATOR_PRIO_POWER_LIMIT};
+        return &pat;
+    }
+    case EVT_RC_CALIB_STARTED:
+    {
+        static const IndicatorPattern_t pat = {s_pat_rc_cal_started,
+                                               2,
+                                               INDICATOR_PRIO_NOTICE};
+        return &pat;
+    }
+    case EVT_RC_CALIB_SUCCESS:
+    {
+        static const IndicatorPattern_t pat = {s_pat_rc_cal_success,
+                                               3,
+                                               INDICATOR_PRIO_NOTICE};
+        return &pat;
+    }
+    case EVT_RC_CALIB_FAILED:
+    {
+        static const IndicatorPattern_t pat = {s_pat_rc_cal_failed,
+                                               2,
+                                               INDICATOR_PRIO_WARNING};
+        return &pat;
+    }
+    case EVT_GYRO_CALIB_SUCCESS:
+    {
+        static const IndicatorPattern_t pat = {s_pat_gyro_cal_success,
+                                               2,
+                                               INDICATOR_PRIO_NOTICE};
         return &pat;
     }
     default:

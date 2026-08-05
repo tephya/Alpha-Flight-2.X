@@ -1,4 +1,5 @@
 #include "app_imu2_redundancy.h"
+#include "app_imu_calibration.h"
 #include "app_shared_types.h"
 #include "bsp_debug_uart.h"
 #include "bsp_blackbox.h"
@@ -40,6 +41,7 @@ typedef enum
 static uint32_t s_last_active_cycle;
 static uint8_t s_last_active_sel = 0xFFU;
 static bool s_active_timestamp_valid;
+static uint8_t s_available_mask;        // 启动时实际初始化成功的IMU掩码
 
 /**
  * @brief   根据active IMU读取时间戳计算控制周期
@@ -218,10 +220,16 @@ static void Health_RecordGood(void)
      */
     if(g_imu_health.good_frame_count >= SWITCH_BACK_THRESHOLD)
     {
-        if(g_imu_health.active_imu_sel == 0)
+        if(g_imu_health.active_imu_sel == 0 &&
+            (s_available_mask & IMU_CAL_REQUIRED_IMU2) != 0U)
+        {
             g_imu_health.imu2_healthy = 1;
-        else
+        }
+        else if(g_imu_health.active_imu_sel == 1 &&
+            (s_available_mask & IMU_CAL_REQUIRED_IMU1) != 0U)
+        {
             g_imu_health.imu1_healthy = 1;
+        }
     }
 }
 
@@ -247,13 +255,26 @@ static void ImuFault_ReportIfActive(void)
 /**
  * @brief   初始化IMU冗余处理模块
  */
-void ImuRedundancy_Init(void)
+void ImuRedundancy_Init(uint8_t init_fail_mask)
 {
     DWT_Init();
 
     s_last_active_cycle = 0U;
     s_last_active_sel = 0xFFU;
     s_active_timestamp_valid = false;
+
+    s_available_mask = (uint8_t)(~init_fail_mask &
+                                 (IMU_CAL_REQUIRED_IMU1 | IMU_CAL_REQUIRED_IMU2));
+
+    g_imu_health.imu1_healthy = (s_available_mask & IMU_CAL_REQUIRED_IMU1) != 0U;
+    g_imu_health.imu2_healthy = (s_available_mask & IMU_CAL_REQUIRED_IMU2) != 0U;
+    g_imu_health.active_imu_sel = g_imu_health.imu1_healthy ? 0U : 1U;
+    g_imu_health.bad_frame_count = 0U;
+    g_imu_health.good_frame_count = 0U;
+    g_imu_health.dual_fault = (s_available_mask == 0U) ? 1U : 0U;
+
+    /* 只校准通过WHO_AM_I初始化的IMU；bias仅保留到本次掉电 */
+    ImuCalibration_Init(s_available_mask);
 }
 
 /**
@@ -314,17 +335,37 @@ ImuUpdateResult_t ImuRedundancy_Update(IcmData_t *out, float *dt_s, uint8_t *fre
     ICM_CopyTo(ICM_INSTANCE_1, &d1);
     ICM_CopyTo(ICM_INSTANCE_2, &d2);
 
+    bool cal_ready = ImuCalibration_Update(
+        &d1, got1 && ((s_available_mask & IMU_CAL_REQUIRED_IMU1) != 0U),
+        &d2, got2 && ((s_available_mask & IMU_CAL_REQUIRED_IMU2) != 0U));
+    
+    if(!cal_ready)
+        return IMU_UPDATE_CALIBRATION;
+
+    /* CrossCheck、姿态解算和PID统一使用以去零偏数据。 */
+    if((s_available_mask & IMU_CAL_REQUIRED_IMU1) != 0U)
+        ImuCalibration_Apply(ICM_INSTANCE_1, &d1);
+    
+    if((s_available_mask & IMU_CAL_REQUIRED_IMU2) != 0U)
+        ImuCalibration_Apply(ICM_INSTANCE_2, &d2);
+
     // DebugUart_PrintImuDiff(&d1, &d2);
 
     uint32_t now_cycle = DWT->CYCCNT;
     float age1_s = (float)(now_cycle - d1.timestamp_cycle) / (float)SystemCoreClock;
     float age2_s = (float)(now_cycle - d2.timestamp_cycle) / (float)SystemCoreClock;
 
-    if (age1_s > MAX_AGE_S || age2_s > MAX_AGE_S)
+    bool age_bad =
+        (((s_available_mask & IMU_CAL_REQUIRED_IMU1) != 0U) && age1_s > MAX_AGE_S) ||
+        (((s_available_mask & IMU_CAL_REQUIRED_IMU2) != 0U) && age2_s > MAX_AGE_S);
+
+    if (age_bad)
     {
         Health_RecordBad();
     }
-    else if (CrossCheck_IsAbnormal(&d1, &d2))
+    else if (s_available_mask == 
+            (IMU_CAL_REQUIRED_IMU1 | IMU_CAL_REQUIRED_IMU2) && 
+        CrossCheck_IsAbnormal(&d1, &d2))
     {
         Health_RecordBad();
     }

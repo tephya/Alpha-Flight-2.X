@@ -1,4 +1,5 @@
 #include "app_rc_link.h"
+#include "app_rc_calibration.h"
 #include "app_shared_types.h"
 #include "bsp_elrs.h"
 #include "cmsis_os2.h"
@@ -6,7 +7,7 @@
 #include "queue.h"
 
 extern osMessageQueueId_t RCChannelMailboxHandle;
-extern osMessageQueueId_t SystemReadyEventGroupHandle;
+extern osEventFlagsId_t SystemReadyEventGroupHandle;
 extern osMessageQueueId_t IndicatorEventQueueHandle;
 
 /* EdgeTx Packet Rate = 150Hz, 周期≈6.63ms；
@@ -25,6 +26,7 @@ void App_RcLink_Task(void *argument)
     (void)argument;
 
     ELRS_Init();
+    RcCalibration_Init();
 
     for (;;)
     {
@@ -32,6 +34,10 @@ void App_RcLink_Task(void *argument)
 
         RCChannelData_t rc;
         ELRS_CopyTo(&rc);
+
+        /* 校准状态机读取原始CRSF值；只发布给FlightCtrl前再归一化。 */
+        RcCalibration_Update(&rc);
+        RcCalibration_Apply(&rc);
 
         if(osMessageQueueGetSpace(RCChannelMailboxHandle) == 0)
         {
@@ -45,6 +51,11 @@ void App_RcLink_Task(void *argument)
             osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_RC_LINK_OK);
         else
             osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_RC_LINK_OK);
+
+        if(RcCalibration_IsReady() && !RcCalibration_IsActive())
+            osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_RC_CALIB_OK);
+        else
+            osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_RC_CALIB_OK);
 
         // 遥控失联持续报警
         if(!rc.link_ok)

@@ -211,8 +211,8 @@ void ICM_TriggerRead(IcmInstance_t inst)
     s_icmData[inst].ax = raw_ay * LSB_ACC;
     s_icmData[inst].ay = raw_ax * LSB_ACC;
     s_icmData[inst].az = raw_az * LSB_ACC;
-    s_icmData[inst].gx = raw_gy * LSB_GYO;
-    s_icmData[inst].gy = raw_gx * LSB_GYO;
+    s_icmData[inst].gx = -(raw_gy * LSB_GYO);
+    s_icmData[inst].gy = -(raw_gx * LSB_GYO);
     s_icmData[inst].gz = raw_gz * LSB_GYO;
     s_icmData[inst].timestamp_cycle = DWT->CYCCNT;
 }

@@ -9,7 +9,7 @@
 extern osMessageQueueId_t NavStateMailboxHandle;
 extern osMessageQueueId_t MagDataMailboxHandle;
 extern osMessageQueueId_t NavCommandQueueHandle;
-extern osMessageQueueId_t SystemReadyEventGroupHandle;
+extern osEventFlagsId_t SystemReadyEventGroupHandle;
 extern osMessageQueueId_t IndicatorEventQueueHandle;
 
 #define TASK_NAV_PERIOD_MS 20U

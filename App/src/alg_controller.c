@@ -93,19 +93,42 @@ float YawHeadingHold_Update(PID_t *pid_yaw,
 }
 
 /*========== 遥控通道映射 =========*/
+#define RC_NORMALIZED_MIN 172U
+#define RC_NORMALIZED_MID 992U
+#define RC_NORMALIZED_MAX 1811U
+
+static float Map_CenteredChannel(uint16_t ch, float magnitude)
+{
+    if(ch >= RC_NORMALIZED_MAX)
+        return magnitude;
+    if(ch <= RC_NORMALIZED_MIN)
+        return -magnitude;
+    if(ch == RC_NORMALIZED_MID)
+        return 0.0f;
+    
+    if(ch > RC_NORMALIZED_MID)
+    {
+        return (float)(ch - RC_NORMALIZED_MID) /
+               (float)(RC_NORMALIZED_MAX - RC_NORMALIZED_MID) * magnitude;
+    }
+
+    return -(float)(RC_NORMALIZED_MID - ch) /
+           (float)(RC_NORMALIZED_MID - RC_NORMALIZED_MIN) * magnitude;
+}
+
 float Map_Roll(uint16_t ch)
 {
-    return (ch - 991.5f) / 819.5f * 30.0f;
+    return Map_CenteredChannel(ch, 30.0f);
 }
 
 float Map_Pitch(uint16_t ch)
 {
-    return -(ch - 991.5f) / 819.5f * 30.0f;
+    return -Map_CenteredChannel(ch, 30.0f);
 }
 
 float Map_Yaw(uint16_t ch)
 {
-    return (ch - 991.5f) / 819.5f * 90.0f;
+    return Map_CenteredChannel(ch, 90.0f);
 }
 
 uint16_t Map_Throttle(uint16_t ch)

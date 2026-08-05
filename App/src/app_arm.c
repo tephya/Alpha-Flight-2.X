@@ -1,4 +1,6 @@
 #include "app_arm.h"
+#include "app_rc_calibration.h"
+#include "app_imu_calibration.h"
 #include "bsp_blackbox.h"
 #include "cmsis_os2.h"
 #include <math.h>
@@ -119,6 +121,12 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas, fl
         // 失联状态禁止解锁
         if(!rc->link_ok)
             return;
+
+        /* 调试阶段不允许未校准输入解锁 */
+        if(!RcCalibration_IsReady() || RcCalibration_IsActive() || !ImuCalibration_IsReady())
+        {
+            return;
+        }
 
 #if !DEBUG_SKIP_ARM_READY_CHECK
         uint32_t ready_flags = osEventFlagsGet(SystemReadyEventGroupHandle);

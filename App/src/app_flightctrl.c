@@ -1,5 +1,6 @@
 #include "app_flightctrl.h"
 #include "app_imu2_redundancy.h"
+#include "app_imu_calibration.h"
 #include "app_rc_link.h"
 #include "app_arm.h"
 #include "app_shared_types.h"
@@ -28,7 +29,7 @@
 
 extern osMessageQueueId_t MagDataMailboxHandle;
 extern osMessageQueueId_t RCChannelMailboxHandle;
-extern osMessageQueueId_t SystemReadyEventGroupHandle;
+extern osEventFlagsId_t SystemReadyEventGroupHandle;
 
 static PID_t pid_yaw;
 
@@ -189,9 +190,8 @@ void App_FlightCtrl_Task(void *argument)
      * fail_mask非0说明某颗IMU的WHO_AM_I校验没过，SPI通信有问题，
      * 测试阶段先不处理这个返回值，实际飞控代码需要在这里加错误处理/指示灯报警 */
     uint8_t fail_mask = ICM_InitAll();
-    (void)fail_mask;
 
-    ImuRedundancy_Init();
+    ImuRedundancy_Init(fail_mask);
     FlightControl_Init();
     Arm_Init();
 
@@ -199,6 +199,7 @@ void App_FlightCtrl_Task(void *argument)
     IcmData_t active_data;
     float dt;
     uint16_t m1, m2, m3, m4;
+    bool attitude_initialized = false;
 
     for (;;)
     {
@@ -217,6 +218,19 @@ void App_FlightCtrl_Task(void *argument)
             osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_IMU_HEALTH_OK);
         else
             osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_IMU_HEALTH_OK);
+
+        if(ImuCalibration_IsReady())
+            osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_GYRO_CALIB_OK);
+        else
+            osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_GYRO_CALIB_OK);
+
+        if(imu_result == IMU_UPDATE_CALIBRATION)
+        {
+            /* 校准期间禁止任何控制输出；移动机体只会延长等待时间。 */
+            FlightControl_Reset();
+            BSP_DSHOT_Send(0U, 0U, 0U, 0U);
+            continue;
+        }
 
         if(imu_result == IMU_UPDATE_TIMING_ANOMALY)
         {
@@ -277,7 +291,18 @@ void App_FlightCtrl_Task(void *argument)
          * dt来自active IMU连续两次实际读取时间戳，而不是Task唤醒间隔。
          */
         Attitude_ComputeAccelAngles(&active_data, &attitude);
-        Attitude_Update(&active_data, &attitude, dt);
+
+        if(!attitude_initialized)
+        {
+            /* 首帧以崇礼方向初始化，避免从0度缓慢收敛造成虚假误差。 */
+            attitude.roll = attitude.accel_roll;
+            attitude.pitch = attitude.accel_pitch;
+            attitude_initialized = true;
+        }
+        else
+        {
+            Attitude_Update(&active_data, &attitude, dt);
+        }
 
         fc.roll_meas = attitude.roll * 57.29578f;
         fc.pitch_meas = attitude.pitch * 57.29578f;

@@ -459,6 +459,16 @@
               <FilePath>..\App\Src\app_arm.c</FilePath>
             </File>
             <File>
+              <FileName>app_imu_calibration.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\app_imu_calibration.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_rc_calibration.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\app_rc_calibration.c</FilePath>
+            </File>
+            <File>
               <FileName>bsp_buzzer.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\src\bsp_buzzer.c</FilePath>
@@ -522,6 +532,11 @@
               <FileName>bsp_led.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\Src\bsp_led.c</FilePath>
+            </File>
+            <File>
+              <FileName>bsp_config_flash.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\bsp_config_flash.c</FilePath>
             </File>
           </Files>
         </Group>

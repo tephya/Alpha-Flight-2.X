@@ -10,10 +10,14 @@
 #define SYSREADY_BIT_VOLTAGE_OK (1 << 2) // Task_PowerMonit置位
 #define SYSREADY_BIT_RC_LINK_OK (1 << 3) // Task_RC_Link置位
 #define SYSREADY_BIT_IMU_HEALTH_OK (1 << 4) // Task_FlightCtrl置位，读g_imu_health
+#define SYSREADY_BIT_RC_CALIB_OK (1 << 5) // Task_RC_link置位
+#define SYSREADY_BIT_GYRO_CALIB_OK (1 << 6) // Task_FlightCtrl置位
 
-#define SYSREADY_ARM_MASK (SYSREADY_BIT_HOME_VALID | SYSREADY_BIT_MAG_OK |     \
-                           SYSREADY_BIT_VOLTAGE_OK | SYSREADY_BIT_RC_LINK_OK | \
-                           SYSREADY_BIT_IMU_HEALTH_OK)
+#define SYSREADY_ARM_MASK (SYSREADY_BIT_HOME_VALID | SYSREADY_BIT_MAG_OK |     	\
+                           SYSREADY_BIT_VOLTAGE_OK | SYSREADY_BIT_RC_LINK_OK | 	\
+                           SYSREADY_BIT_IMU_HEALTH_OK |                       	\
+                           SYSREADY_BIT_RC_CALIB_OK |                         	\
+                           SYSREADY_BIT_GYRO_CALIB_OK)							
 
 typedef __packed struct
 {
@@ -72,15 +76,19 @@ typedef enum
 
 typedef enum
 {
-    EVT_ARMED = 0,                      // 解锁
-    EVT_DISARMED = 1,                   // 未解锁
-    EVT_LOW_BATTERY = 2,                // 低电压(<14.0V)
-    EVT_CRITICAL_BATTERY = 3,           // 超低电压(<13.2V)，持续报警
-    EVT_GPS_FIX_ACQUIRED = 4,           // GPS记录返航点成功
-    EVT_SD_CARD_ERROR = 5,              // 读写SD卡出错
-    EVT_IMU_FAULT = 6,                  // IMU通信错误
-    EVT_RC_LOST = 7,                    // 遥控信号丢失，持续报警
-    EVT_CURRENT_LIMITING = 8,           // 过流保护中
+    EVT_ARMED = 0,              // 解锁
+    EVT_DISARMED = 1,           // 未解锁
+    EVT_LOW_BATTERY = 2,        // 低电压(<14.0V)
+    EVT_CRITICAL_BATTERY = 3,   // 超低电压(<13.2V)，持续报警
+    EVT_GPS_FIX_ACQUIRED = 4,   // GPS记录返航点成功
+    EVT_SD_CARD_ERROR = 5,      // 读写SD卡出错
+    EVT_IMU_FAULT = 6,          // IMU通信错误
+    EVT_RC_LOST = 7,            // 遥控信号丢失，持续报警
+    EVT_CURRENT_LIMITING = 8,   // 过流保护中
+    EVT_RC_CALIB_STARTED = 9,  // RC校准开始
+    EVT_RC_CALIB_SUCCESS = 10,  // RC校准成功
+    EVT_RC_CALIB_FAILED = 11,   // RC校准失败
+    EVT_GYRO_CALIB_SUCCESS = 12, // Gyro校准成功
 } IndicatorEvent_t;
 
 typedef enum
