@@ -40,8 +40,8 @@ void RateController_Init(void)
 {
     /* 诊断阶段先使用P-only并限制最大姿态修正
      * 防止再次失稳时Mixer产生过大的电机差动。 */
-    PID_Init(&rate_controller.roll,  0.50f, 0.00f, 0.000f, 120.0f);
-    PID_Init(&rate_controller.pitch, 0.50f, 0.00f, 0.000f, 120.0f);
+    PID_Init(&rate_controller.roll,  0.65f, 0.10f, 0.000f, 120.0f);
+    PID_Init(&rate_controller.pitch, 0.65f, 0.10f, 0.000f, 120.0f);
     /* Yaw暂时保持原参数，本轮主要定位Roll/Pitch振荡。 */
     PID_Init(&rate_controller.yaw,   2.00f, 0.10f, 0.000f, 200.0f);
 }
@@ -128,7 +128,7 @@ float Map_Pitch(uint16_t ch)
 
 float Map_Yaw(uint16_t ch)
 {
-    return Map_CenteredChannel(ch, 90.0f);
+    return -Map_CenteredChannel(ch, 90.0f);
 }
 
 uint16_t Map_Throttle(uint16_t ch)
