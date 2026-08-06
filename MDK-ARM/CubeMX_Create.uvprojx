@@ -409,6 +409,11 @@
               <FilePath>..\App\src\alg_pid.c</FilePath>
             </File>
             <File>
+              <FileName>alg_yaw_estimator.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\alg_yaw_estimator.c</FilePath>
+            </File>
+            <File>
               <FileName>app_blackbox.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\src\app_blackbox.c</FilePath>
@@ -467,6 +472,11 @@
               <FileName>app_rc_calibration.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\Src\app_rc_calibration.c</FilePath>
+            </File>
+            <File>
+              <FileName>app_level_trim.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\app_level_trim.c</FilePath>
             </File>
             <File>
               <FileName>bsp_buzzer.c</FileName>

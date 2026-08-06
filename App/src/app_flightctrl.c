@@ -3,6 +3,7 @@
 #include "app_imu_calibration.h"
 #include "app_rc_link.h"
 #include "app_arm.h"
+#include "app_level_trim.h"
 #include "app_shared_types.h"
 #include "bsp_elrs.h"
 #include "bsp_dshot.h"
@@ -13,6 +14,7 @@
 #include "alg_controller.h"
 #include "alg_pid.h"
 #include "alg_mixer.h"
+#include "alg_yaw_estimator.h"
 #include "cmsis_os2.h"
 #include "FreeRTOS.h"
 #include "queue.h"
@@ -40,7 +42,9 @@ void FlightControl_Init(void)
 {
     AngleController_Init();
     RateController_Init();
-    PID_Init(&pid_yaw, 0.0f, 0.0f, 0.0f, 200.0f);
+    YawEstimator_Init();
+    /* 最大输出限制为30°/s，避免航向误差直接要求过大的Yaw Rate */
+    PID_Init(&pid_yaw, 1.0f, 0.0f, 0.0f, 30.0f);
 
     fc.yaw_mode = 0;
     fc.yaw_target = 0.0f;
@@ -129,23 +133,27 @@ static void FlightControl_Update(float dt, float gx, float gy, float gz)
     if(s_rc_last.channels[5]>1500)
     {
         // 手动偏航
-        fc.yaw_mode = 1;
+        fc.yaw_mode = 1U;
         fc.yaw_rate_target = Map_Yaw(s_rc_last.channels[3]);
         if(fabsf(fc.yaw_rate_target) < 5.0f)
             fc.yaw_rate_target = 0.0f;
     }
     else
     {
-        /* 自动偏航；
-         * 第一次进入Heading Hold，锁定当前航向*/
-        if(fc.yaw_mode)
+        // 自动偏航；
+        if(fc.yaw_mode != 0U)
         {
+            /* 手动Yaw退出时以当前航向为新锁定点，并清除两级Yaw控制器的
+             * 历史状态，避免模式切换把旧积分或微分带入 */
             fc.yaw_target = fc.yaw_meas;
-            pid_yaw.integral = 0.0f;
+            PID_Reset(&pid_yaw);
+            rate_controller.yaw.integral = 0.0f;
+            PID_ResetDerivativeOnly(&rate_controller.yaw);
         }
-        fc.yaw_mode = 0;
 
-        fc.yaw_rate_target = YawHeadingHold_Update(&pid_yaw, fc.yaw_target, fc.yaw_meas, dt);
+        fc.yaw_mode = 0;
+        fc.yaw_rate_target = YawHeadingHold_Update(
+            &pid_yaw, fc.yaw_target, fc.yaw_meas, dt);
     }
 
     /* 角度环(PID外环) */
@@ -174,6 +182,18 @@ static int16_t BB_ToInt16(float value, float scale)
         return -32768;
 
     return (int16_t)scaled;
+}
+
+static uint16_t BB_ToUInt16(float value, float scale)
+{
+    const float scaled = value * scale;
+
+    if(scaled <= 0.0f)
+        return 0U;
+    if(scaled >= 65535.0f)
+        return 65535U;
+
+    return (uint16_t)(scaled + 0.5f);
 }
 
 /**
@@ -292,6 +312,11 @@ void App_FlightCtrl_Task(void *argument)
          */
         Attitude_ComputeAccelAngles(&active_data, &attitude);
 
+        /* Trim只能作用于Accel角，不能直接修改最终姿态角或Gyro数据 */
+        LevelTrim_Apply((IcmInstance_t)g_imu_health.active_imu_sel,
+                        &attitude.accel_roll,
+                        &attitude.accel_pitch);
+
         if(!attitude_initialized)
         {
             /* 首帧以崇礼方向初始化，避免从0度缓慢收敛造成虚假误差。 */
@@ -308,15 +333,28 @@ void App_FlightCtrl_Task(void *argument)
         fc.pitch_meas = attitude.pitch * 57.29578f;
 
         // 获取Mag数据
+        // 每个有效active IMU帧都用Gyro推进Yaw；Mag只在50Hz新样本到达时慢校正。
+        YawEstimator_UpdateGyro(active_data.gz, dt);
+
         MagData_t mag;
         if (osMessageQueueGet(MagDataMailboxHandle, &mag, NULL, 0) == osOK)
         {
-            Attitude_CptYaw(&mag, &attitude);
+            (void)YawEstimator_CorrectMag(
+                &mag,
+                attitude.roll,
+                attitude.pitch,
+                g_arm_state == ARM_STATE_DISARMED);
+        }
+
+        if(YawEstimator_IsInitialized())
+        {
+            attitude.yaw = YawEstimator_GetYawRad();
             fc.yaw_meas = attitude.yaw * 57.29578f;
         }
 
         // 获取RC数据
         osMessageQueueGet(RCChannelMailboxHandle, &s_rc_last, NULL, 0);
+        LevelTrim_HandleRc(&s_rc_last);
 
         Arm_Update(&s_rc_last, fc.roll_meas, fc.pitch_meas, dt);
 
@@ -377,6 +415,39 @@ void App_FlightCtrl_Task(void *argument)
 
             log.angle_target_cdeg[0] = BB_ToInt16(fc.roll_target, 100.0f);
             log.angle_target_cdeg[1] = BB_ToInt16(fc.pitch_target, 100.0f);
+            log.angle_target_cdeg[2] = BB_ToInt16(fc.yaw_target, 100.0f);
+
+            float trim_roll_rad;
+            float trim_pitch_rad;
+
+            if(LevelTrim_GetOffsets(
+                        (IcmInstance_t)g_imu_health.active_imu_sel,
+                        &trim_roll_rad,
+                        &trim_pitch_rad))
+            {
+                log.level_trim_offset_cdeg[0] =
+                    BB_ToInt16(trim_roll_rad, 5729.578f);
+                log.level_trim_offset_cdeg[1] =
+                    BB_ToInt16(trim_pitch_rad, 5729.578f);
+                log.flags |= (1U << 3);
+            }
+
+            YawEstimatorDiagnostics_t yaw_diag;
+            YawEstimator_CopyDiagnostics(&yaw_diag);
+
+            if(yaw_diag.initialized)
+            {
+                log.mag_yaw_cdeg = BB_ToInt16(
+                    yaw_diag.mag_yaw_rad, 5729.578f);
+                log.yaw_mag_innovation_cdeg = BB_ToInt16(
+                    yaw_diag.mag_innovation_rad, 5729.578f);
+                log.mag_field_mG = BB_ToUInt16(
+                    yaw_diag.mag_field_norm_gauss, 1000.0f);
+                log.flags |= (1U << 5);
+            }
+
+            if(yaw_diag.mag_accepted)
+                log.flags |= (1U << 4);
 
             log.rate_target_ddps[0] = BB_ToInt16(fc.roll_rate_target, 10.0f);
             log.rate_target_ddps[1] = BB_ToInt16(fc.pitch_rate_target, 10.0f);
@@ -412,6 +483,9 @@ void App_FlightCtrl_Task(void *argument)
 
             if(g_power_health.current_limiting)
                 log.flags |= (1U << 1);
+
+            if(fc.yaw_mode != 0U)
+                log.flags |= (1U << 2);
 
             log.throttle = fc.throttle;
             log.limited_throttle = limited_throttle;

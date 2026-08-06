@@ -41,9 +41,14 @@ HAL_StatusTypeDef QMC_Init(void)
  */
 static void QMC_Raw2Gauss(void)
 {
-    mag_data.MX = mag_data.rmx * QMC_SENSITIVITY;
-    mag_data.MY = -1 * mag_data.rmy * QMC_SENSITIVITY;  // 取负数，MY才符合 NED 的Y轴(符合作者的机体坐标系，请根据实际情况来)
-    mag_data.MZ = -1 * mag_data.rmz * QMC_SENSITIVITY;  // 取负数，MZ才符合 NED 的Z轴
+    /**
+     * QMC相对机体安装方向：
+     * sensor +X指向机尾，sensor +Y指向机体右侧，
+     * sensor +Z与机体NED +Z同向
+     */
+    mag_data.MX = -mag_data.rmx * QMC_SENSITIVITY;
+    mag_data.MY = mag_data.rmy * QMC_SENSITIVITY;
+    mag_data.MZ = -mag_data.rmz * QMC_SENSITIVITY;
 }
 
 /**

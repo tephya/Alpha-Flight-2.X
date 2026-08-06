@@ -51,6 +51,9 @@ typedef __packed struct
     BB_ControlData_t data;
 } BB_ControlRec_t;
 
+typedef char BB_ControlRecV3SizeMustBe85[
+    (sizeof(BB_ControlRec_t) == 85U) ? 1 : -1
+];
 
 /*====== 双缓冲消费状态(内部私有) ======*/
 typedef enum
@@ -250,7 +253,7 @@ int8_t BB_LogControl(const BB_ControlData_t *data)
     BB_ControlRec_t rec;
 
     rec.magic = BB_FRAME_MAGIC;
-    rec.type = BB_REC_CONTROL;
+    rec.type = BB_REC_CONTROL_V3;
     rec.data = *data;
 
     return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));

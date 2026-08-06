@@ -1,5 +1,6 @@
 #include "app_imu2_redundancy.h"
 #include "app_imu_calibration.h"
+#include "app_level_trim.h"
 #include "app_shared_types.h"
 #include "bsp_debug_uart.h"
 #include "bsp_blackbox.h"
@@ -275,6 +276,7 @@ void ImuRedundancy_Init(uint8_t init_fail_mask)
 
     /* 只校准通过WHO_AM_I初始化的IMU；bias仅保留到本次掉电 */
     ImuCalibration_Init(s_available_mask);
+    LevelTrim_Init(s_available_mask);
 }
 
 /**
@@ -348,6 +350,10 @@ ImuUpdateResult_t ImuRedundancy_Update(IcmData_t *out, float *dt_s, uint8_t *fre
     
     if((s_available_mask & IMU_CAL_REQUIRED_IMU2) != 0U)
         ImuCalibration_Apply(ICM_INSTANCE_2, &d2);
+
+    LevelTrim_UpdateSamples(
+        &d1, got1 && ((s_available_mask & IMU_CAL_REQUIRED_IMU1) != 0U),
+        &d2, got2 && ((s_available_mask & IMU_CAL_REQUIRED_IMU2) != 0U));
 
     // DebugUart_PrintImuDiff(&d1, &d2);
 

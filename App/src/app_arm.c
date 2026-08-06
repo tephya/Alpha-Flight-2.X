@@ -1,4 +1,5 @@
 #include "app_arm.h"
+#include "app_level_trim.h"
 #include "app_rc_calibration.h"
 #include "app_imu_calibration.h"
 #include "bsp_blackbox.h"
@@ -123,7 +124,10 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas, fl
             return;
 
         /* 调试阶段不允许未校准输入解锁 */
-        if(!RcCalibration_IsReady() || RcCalibration_IsActive() || !ImuCalibration_IsReady())
+        if(!RcCalibration_IsReady() || 
+            RcCalibration_IsActive() || 
+            !ImuCalibration_IsReady() ||
+            LevelTrim_IsActive())
         {
             return;
         }

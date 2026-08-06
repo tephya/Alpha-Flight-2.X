@@ -17,7 +17,9 @@ typedef enum
     BB_REC_DUAL_FAULT = 0x03,    // 低频事件：双IMU失效
     BB_REC_VOLTAGE_FAULT = 0x04, // 低频事件：持续低压
     BB_REC_IMU_SWITCH = 0x05,    // 低频事件：主备IMU切换
-    BB_REC_CONTROL = 0x06,      // PID调参控制帧
+    BB_REC_CONTROL = 0x06,      // PID调参控制帧：旧71-byte payload
+    BB_REC_CONTROL_V2 = 0x07,   // CONTROL V2：增加Yaw角目标和Yaw模式
+    BB_REC_CONTROL_V3 = 0x08,   // 融合Yaw和Level Trim可观测诊断帧
 } BB_RecType_t;
 
 typedef __packed struct
@@ -25,7 +27,12 @@ typedef __packed struct
     uint32_t timestamp_cycle; // DWT 时间戳，解析时按uint32_t无符号差值处理
 
     int16_t angle_cdeg[3];        // Roll/Pitch/Yaw，0.01°
-    int16_t angle_target_cdeg[2]; // Roll/Pitch目标，0.01°
+    int16_t angle_target_cdeg[3]; // Roll/Pitch/Yaw目标，0.01°
+
+    int16_t level_trim_offset_cdeg[2];      // active IMU Roll/Pitch Trim，0.01°
+    int16_t mag_yaw_cdeg;        // 最近一次倾斜补偿后的原始Mag航向，0.01°
+    int16_t yaw_mag_innovation_cdeg;        // wrap(Mag_Yaw - fused_Yaw)，0.01°
+    uint16_t mag_field_mG;       // Mag三轴模长，milli-gauss
 
     int16_t rate_target_ddps[3]; // 目标角速度，0.1°/s
     int16_t rate_meas_ddps[3];   // Gyro角速度，0.1°/s
@@ -45,7 +52,8 @@ typedef __packed struct
     uint8_t active_imu;
     uint8_t fresh_imu_flags;
 
-    uint8_t flags; // bit0=Airmode，bit1=Current limiting
+    uint8_t flags; // bit0=Airmode，bit1=Current limiting，bit2=Yaw manual mode
+                    // bit3=Level Trim ready，bit4=Mag accepted，bit5=Yaw estimator initialized
 } BB_ControlData_t;
 
 int8_t BB_Init(void);

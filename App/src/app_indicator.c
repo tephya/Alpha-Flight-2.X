@@ -41,6 +41,9 @@ static const BeepStep_t s_pat_rc_cal_started[] = {{70, 70}, {70, 0}};           
 static const BeepStep_t s_pat_rc_cal_success[] = {{60, 60}, {60, 60}, {250, 0}};    // 两段一长
 static const BeepStep_t s_pat_rc_cal_failed[] = {{350, 100}, {80, 0}};      // 一长一短
 static const BeepStep_t s_pat_gyro_cal_success[] = {{50, 50}, {150, 0}};    // 短+中
+static const BeepStep_t s_pat_level_trim_started[] = {{80, 80}, {80, 80}, {80, 0}};    // 三短
+static const BeepStep_t s_pat_level_trim_success[] = {{80, 80}, {250, 0}};  // 短+长
+static const BeepStep_t s_pat_level_trim_failed[] = {{400, 120}, {80, 120}, {80, 0}};   // 长+两短
 
 /**
  * @brief   按事件类型返回对应节拍
@@ -143,6 +146,27 @@ static const IndicatorPattern_t *Indicator_GetPattern(IndicatorEvent_t evt)
         static const IndicatorPattern_t pat = {s_pat_gyro_cal_success,
                                                2,
                                                INDICATOR_PRIO_NOTICE};
+        return &pat;
+    }
+    case EVT_LEVEL_TRIM_STARTED:
+    {
+        static const IndicatorPattern_t pat = {s_pat_level_trim_started,
+                                             3,
+                                             INDICATOR_PRIO_NOTICE};
+        return &pat;
+    }
+    case EVT_LEVEL_TRIM_SUCCESS:
+    {
+        static const IndicatorPattern_t pat = {s_pat_level_trim_success,
+                                             2,
+                                             INDICATOR_PRIO_NOTICE};
+        return &pat;
+    }
+    case EVT_LEVEL_TRIM_FAILED:
+    {
+        static const IndicatorPattern_t pat = {s_pat_level_trim_failed,
+                                             3,
+                                             INDICATOR_PRIO_WARNING};
         return &pat;
     }
     default:
