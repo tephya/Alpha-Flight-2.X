@@ -43,6 +43,7 @@ void MX_I2C1_Init(void);
 HAL_StatusTypeDef IIC_WriteReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t data);
 HAL_StatusTypeDef IIC_ReadReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data);
 HAL_StatusTypeDef IIC_ReadBurst(uint8_t dev_addr, uint8_t reg_addr, uint8_t *buf, uint16_t len);
+HAL_StatusTypeDef IIC_RecoverBus(void);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

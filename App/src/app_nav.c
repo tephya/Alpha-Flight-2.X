@@ -13,8 +13,10 @@ extern osEventFlagsId_t SystemReadyEventGroupHandle;
 extern osMessageQueueId_t IndicatorEventQueueHandle;
 
 #define TASK_NAV_PERIOD_MS 20U
+#define QMC_RECOVERY_FAILURE_COUNT 3U
 
 static uint8_t s_home_valid = 0;        // 缓存值，只在处理NAV_CMD_SET_HOME时更新
+static uint8_t s_qmc_failure_streak;    // qmc读取失败缓存值
 
 static void Nav_BuildNavState(NavState_t *out)
 {
@@ -87,22 +89,51 @@ void App_Nav_Task(void *argument)
         osMessageQueuePut(NavStateMailboxHandle, &nav, 0, 0);
 
         MagData_t mag;
-        QMC_ReadData(); // I2C1读磁力计，内部完成Raw2Gauss
-        QMC_CopyTo(&mag);
+        HAL_StatusTypeDef mag_read_status = QMC_ReadData(); // I2C1读磁力计，内部完成Raw2Gauss
+        // 检查读取Mag状态
+        if(mag_read_status == HAL_OK)
+        {
+            s_qmc_failure_streak = 0U;
 
-        // 检测MAG_OK_BIT
-        bool mag_ok = !mag.ovfl;
-        if(mag_ok)
-            osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_MAG_OK);
+            /* 只有本轮I2C读取成功，才复制并发布新的Mag数据。
+             * OVFL样本仍发布给YawEstimator，由其记录明确的拒绝原因，
+             * 但SYSREADY_BIT_MAG_OK必须保持清除。 */
+            QMC_CopyTo(&mag);
+
+            if(!mag.ovfl)
+                osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_MAG_OK);
+            else
+                osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_MAG_OK);
+
+            if (osMessageQueueGetSpace(MagDataMailboxHandle) == 0U)
+            {
+                MagData_t discard;
+                (void)osMessageQueueGet(MagDataMailboxHandle, &discard, NULL, 0U);
+            }
+            (void)osMessageQueuePut(MagDataMailboxHandle, &mag, 0U, 0U);
+        }
         else
+        {
+            /* 读取失败时不能重新发布mag_data内部缓存的上一帧，
+             * 否则FlightCtrl会把旧数据误认为持续到达的新样本 */
             osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_MAG_OK);
 
-        if (osMessageQueueGetSpace(MagDataMailboxHandle) == 0)
-        {
-            MagData_t discard;
-            osMessageQueueGet(MagDataMailboxHandle, &discard, NULL, 0);
+            if(s_qmc_failure_streak < QMC_RECOVERY_FAILURE_COUNT)
+                s_qmc_failure_streak++;
+
+            if(s_qmc_failure_streak >= QMC_RECOVERY_FAILURE_COUNT)
+            {
+                s_qmc_failure_streak = 0U;
+
+                /* 先恢复I2C Bus，再重新配置QMC的量程、ODR和Continuous Mode，
+                 * 即使恢复成功，本轮也不置MAG_OK，必须等待下一轮真实读取成功。 */
+                if(IIC_RecoverBus() == HAL_OK)
+                {
+                    (void)QMC_Init();
+                }
+                
+            }
         }
-        osMessageQueuePut(MagDataMailboxHandle, &mag, 0, 0);
 
         osDelay(TASK_NAV_PERIOD_MS);
     }

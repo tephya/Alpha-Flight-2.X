@@ -498,7 +498,7 @@ void App_FlightCtrl_Task(void *argument)
 
         /* 测试阶段：循环体到这里结束，下一轮由osEventFlagsWait本身阻塞节流，
             * 不需要额外osDelay */
-        }
+    }
 }
 
 void FlightControl_CopyTo(FlightControl_t *out)

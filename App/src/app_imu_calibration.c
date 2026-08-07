@@ -10,9 +10,10 @@ extern osMessageQueueId_t IndicatorEventQueueHandle;
 // 800Hz下1600个样本约为2s。只接受静止样本，移动时整段重新计数。
 #define GYRO_CAL_SAMPLE_COUNT 1600U
 #define GYRO_CAL_MAX_ABS_DPS 3.0f   // Gyro Calibration Maximum Absolute Degree Per Second
-#define GYRO_CAL_MAX_STDDEV_DPS 0.25f   // standard deviation，标准差
+#define GYRO_CAL_MAX_STDDEV_DPS 0.40f   // standard deviation，标准差
 #define GYRO_CAL_ACCEL_NORM_MIN_G 0.85f // Norm：模长，加速度模长最低阈值
 #define GYRO_CAL_ACCEL_NORM_MAZ_G 1.15f
+#define GYRO_CAL_MOTION_CONFIRM_COUNT 4U
 
 typedef struct
 {
@@ -25,6 +26,7 @@ typedef struct
 static GyroCalSensor_t s_sensor[ICM_INSTANCE_MAX];
 static uint8_t s_required_mask;
 static bool s_ready;
+static uint8_t s_nonstationary_streak[ICM_INSTANCE_MAX];
 
 static void ImuCalibration_ResetAccumulators(void)
 {
@@ -33,6 +35,8 @@ static void ImuCalibration_ResetAccumulators(void)
         s_sensor[i].count = 0U;
         memset(s_sensor[i].sum, 0, sizeof(s_sensor[i].sum));
         memset(s_sensor[i].sum_sq, 0, sizeof(s_sensor[i].sum_sq));
+
+        s_nonstationary_streak[i] = 0U;
     }
 }
 
@@ -119,6 +123,8 @@ static bool ImuCalibration_CalculateBias(void)
 void ImuCalibration_Init(uint8_t required_mask)
 {
     memset(s_sensor, 0, sizeof(s_sensor));
+    memset(s_nonstationary_streak, 0, sizeof(s_nonstationary_streak));
+
     s_required_mask = required_mask & (IMU_CAL_REQUIRED_IMU1 | IMU_CAL_REQUIRED_IMU2);
     s_ready = false;
 }
@@ -145,9 +151,22 @@ bool ImuCalibration_Update(const IcmData_t *imu1, bool imu1_fresh, const IcmData
         any_required_fresh = true;
         if(!ImuCalibration_SampleIsStationary(data[i]))
         {
-            ImuCalibration_ResetAccumulators();
+            /* 单帧Gyro/Accel尖刺不代表机体真的发生移动
+             * 本帧不参与bias累计，但保留此前已经收集的静止样本 */
+            if(s_nonstationary_streak[i] < GYRO_CAL_MOTION_CONFIRM_COUNT)
+            {
+                s_nonstationary_streak[i]++;
+            }
+            /* 同一颗IMU连续多帧越界时，才认为静止条件已经被破坏，
+             * 此时两颗IMU同一重新开始，保证他们仍属于同一静止窗口 */
+            if(s_nonstationary_streak[i] >= GYRO_CAL_MOTION_CONFIRM_COUNT)
+            {
+                ImuCalibration_ResetAccumulators();
+            }
             return false;
         }
+
+        s_nonstationary_streak[i] = 0U;
     }
 
     if(!any_required_fresh)
