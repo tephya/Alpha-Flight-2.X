@@ -29,7 +29,7 @@ void BSP_Buzzer_Init(void)
 
     TIM3->PSC = 0U;
     TIM3->ARR = (uint16_t)(period_ticks - 1U);
-    TIM3->CCR2 = (uint16_t)(period_ticks * BUZZER_DUTY_PERCENT/ 500U);
+    TIM3->CCR2 = (uint16_t)(period_ticks * BUZZER_DUTY_PERCENT/ 100U);
 
     /**
      * 手动产生一次Update事件，把上面写的PSC/ARR/CCR立即从预装载寄存器刷进影子寄存器生效

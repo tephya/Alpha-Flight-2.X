@@ -13,7 +13,7 @@
 #define SYSREADY_BIT_RC_CALIB_OK (1 << 5) // Task_RC_link置位
 #define SYSREADY_BIT_GYRO_CALIB_OK (1 << 6) // Task_FlightCtrl置位
 
-#define SYSREADY_ARM_MASK (SYSREADY_BIT_HOME_VALID | SYSREADY_BIT_MAG_OK |     	\
+#define SYSREADY_ARM_MASK (SYSREADY_BIT_MAG_OK |     	\
                            SYSREADY_BIT_VOLTAGE_OK | SYSREADY_BIT_RC_LINK_OK | 	\
                            SYSREADY_BIT_IMU_HEALTH_OK |                       	\
                            SYSREADY_BIT_RC_CALIB_OK |                         	\

@@ -7,10 +7,10 @@
 
 /**
  * CRSF失联判定阈值
- * 150Hz Packet Rate —— 标称间隔6.67ms，x10倍留出偶发丢帧/RF干扰的容忍空间
+ * 150Hz Packet Rate —— 标称间隔6.67ms，约30个150Hz周期留出偶发丢帧/RF干扰的容忍空间
  * TODO：关闭遥控发射端，观察link_ok多久变false来验证，不合适再调
  */
-#define CRSF_FAITLSAFE_TIMEOUT_MS 70U
+#define CRSF_FAILSAFE_TIMEOUT_MS 200U
 
 typedef enum
 {
@@ -31,7 +31,8 @@ static uint8_t s_dma_rx_buf[DMA_BUF_SIZE];
 #pragma arm section zidata
 
 static RCChannelData_t s_rc_data = {0};
-static volatile uint32_t s_last_valid_frame_tick = 0;
+static volatile uint32_t s_last_valid_frame_tick = 0U;
+static bool s_has_valid_rc_frame = false;
 
 /* 8bit CRC8 码表
  * 查表方式速度更快 */
@@ -157,6 +158,9 @@ static int8_t CRSF_ParseFrame(void)
 
             s_rc_data.channels[i] = (uint16_t)((raw >> offset) & 0x7FF);
         }
+
+        s_last_valid_frame_tick = osKernelGetTickCount();
+        s_has_valid_rc_frame = true;
         break;
 
     case 0x14:          // 链路质量数据
@@ -169,7 +173,6 @@ static int8_t CRSF_ParseFrame(void)
         break;
     }
 
-    s_last_valid_frame_tick = osKernelGetTickCount();
     return 1;
 }
 
@@ -200,8 +203,11 @@ void ELRS_Poll(void)
 
     CRSF_ParseFrame();
 
+    uint32_t now = osKernelGetTickCount();
+
     s_rc_data.link_ok =
-        (osKernelGetTickCount() - s_last_valid_frame_tick) <= CRSF_FAITLSAFE_TIMEOUT_MS;
+        s_has_valid_rc_frame &&
+        ((uint32_t)(now - s_last_valid_frame_tick)) <= CRSF_FAILSAFE_TIMEOUT_MS;
 }
 
 void ELRS_CopyTo(RCChannelData_t *out)

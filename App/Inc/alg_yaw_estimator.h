@@ -25,14 +25,16 @@ void YawEstimator_Init(void);
 void YawEstimator_UpdateGyro(float gz_dps, float dt_s);
 
 /**
- * @brief   使用倾斜补偿后的Mag航向对Gyro积分进行慢校正。
- * @param   allow_reference_update  true时允许慢速更新磁场模长基准；仅应在Disarmed时传入true
- * @retval  true    本次Mag样本被接收并用于初始化/校正。
+ * @brief   使用补偿后的Mag航向修正Gyro积分。
+ * @param   is_disarmed     当前是否处于Disarmed状态。
+ *                          仅在Disarmed时允许更新磁场参考值和安全重新捕获Mag。
+ * @retval  true    本次Mag样本参与了初始化、正常校正或重新捕获。
+ * @retval  false   本次Mag样本无效、被门限拒绝或仍在等待重新捕获确认。
  */
 bool YawEstimator_CorrectMag(const MagData_t *mag,
                              float roll_rad,
                              float pitch_rad,
-                             bool allow_reference_update);
+                             bool is_disarmed);
 
 float YawEstimator_GetYawRad(void);
 bool YawEstimator_IsInitialized(void);

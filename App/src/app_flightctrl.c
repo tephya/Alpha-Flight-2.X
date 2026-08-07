@@ -350,6 +350,11 @@ void App_FlightCtrl_Task(void *argument)
         {
             attitude.yaw = YawEstimator_GetYawRad();
             fc.yaw_meas = attitude.yaw * 57.29578f;
+
+            if(g_arm_state == ARM_STATE_DISARMED)
+            {
+                fc.yaw_target = fc.yaw_meas;
+            }
         }
 
         // 获取RC数据

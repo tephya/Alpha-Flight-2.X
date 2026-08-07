@@ -11,7 +11,7 @@
 extern osEventFlagsId_t SystemReadyEventGroupHandle;
 extern osMessageQueueId_t IndicatorEventQueueHandle;
 
-#define DEBUG_SKIP_ARM_READY_CHECK 1 // TODO：装机带奖试飞前须删除这个宏和Arm_Update中的#if
+#define DEBUG_SKIP_ARM_READY_CHECK 0 // TODO：装机带奖试飞前须删除这个宏和Arm_Update中的#if
 
 
 #define ARM_RC_CHANNEL_SWITCH 4

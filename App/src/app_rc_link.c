@@ -20,6 +20,7 @@ extern osMessageQueueId_t IndicatorEventQueueHandle;
  * 不能在还没绑定过遥控器的开机瞬间就先报一次“失联”，那不是真的丢失 */
 static bool s_last_link_ok = false;
 static uint32_t s_rc_lost_last_report_tick = 0;
+static bool s_ever_linked = false;
 
 void App_RcLink_Task(void *argument)
 {
@@ -57,15 +58,21 @@ void App_RcLink_Task(void *argument)
         else
             osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_RC_CALIB_OK);
 
-        // 遥控失联持续报警
-        if(!rc.link_ok)
+        uint32_t now = osKernelGetTickCount();
+
+        // 首次连接时，不用发出提示音
+        if(rc.link_ok)
         {
-            if(s_last_link_ok || 
-                (osKernelGetTickCount() - s_rc_lost_last_report_tick) >= RC_LOST_REPORT_MS)
+            s_ever_linked = true;
+        }
+        else if(s_ever_linked)      // 失联预警
+        {
+            if (s_last_link_ok ||
+                (uint32_t)(now - s_rc_lost_last_report_tick) >= RC_LOST_REPORT_MS)
             {
                 IndicatorEvent_t evt = EVT_RC_LOST;
-                osMessageQueuePut(IndicatorEventQueueHandle, &evt, 0, 0);
-                s_rc_lost_last_report_tick = osKernelGetTickCount();
+                (void)osMessageQueuePut(IndicatorEventQueueHandle, &evt, 0U, 0U);
+                s_rc_lost_last_report_tick = now;
             }
         }
         s_last_link_ok = rc.link_ok;
