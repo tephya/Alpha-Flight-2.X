@@ -7,6 +7,19 @@
 
 extern osMessageQueueId_t IndicatorEventQueueHandle;
 
+static volatile bool s_file_open;
+static volatile bool s_last_close_succeeded;
+
+bool App_Blackbox_IsFileOpen(void)
+{
+    return s_file_open;
+}
+
+bool App_Blackbox_LastCloseSucceeded(void)
+{
+    return s_last_close_succeeded;
+}
+
 /**
  * @brief   Task_Blackbox任务入口，由freertos.c的Start_Blackbox转发调用
  * @note    内部流程：BB_Init(挂载SD卡+建文件) ->
@@ -17,7 +30,8 @@ void App_Blackbox_Task(void *argument)
 {
     (void)argument;
 
-    bool file_open = false;     // 还没有任何文件被打开过，开机不自动建文件
+    s_file_open = false;     // 还没有任何文件被打开过，开机不自动建文件
+    s_last_close_succeeded = false;
     uint8_t last_err_flags = 0; // BB_GetErrorFlags()跳边检测用
 
     /* 必须在第一次等待/置位控制请求之前调用，
@@ -26,7 +40,7 @@ void App_Blackbox_Task(void *argument)
 
     for (;;)
     {  
-        if(!file_open)
+        if(!s_file_open)
         {
             uint32_t ctrl = BB_PollControlRequest(osWaitForever);
             if((int32_t)ctrl >= 0 && (ctrl & BB_CTRL_NEWFILE_REQ))
@@ -36,7 +50,8 @@ void App_Blackbox_Task(void *argument)
 					osDelay(500);   // 挂载失败(卡未插好/供电未稳)，定期重试而非直接卡死整个飞控
 				}
                 BB_BufferInit();
-                file_open = true;
+                s_file_open = true;
+                s_last_close_succeeded = false;
             }
             continue;
         }
@@ -56,15 +71,26 @@ void App_Blackbox_Task(void *argument)
             {
                 while(BB_Process())
                     ;       // 关闭前先把剩余READY数据先落盘，再flush尾巴+真正关闭文件
-                BB_Close();
-                file_open = false;  // 回到“没有文件”状态，等下一次解锁再开新文件
+                s_last_close_succeeded = (BB_Close() == 0);
+                s_file_open = false;  // 回到“没有文件”状态，等下一次解锁再开新文件
             }
 
             if (ctrl & BB_CTRL_NEWFILE_REQ)
             {
+                /* 防御异常的重复NEWFILE请求，避免未关闭旧FIL就重新f_open */
+                if(s_file_open)
+                {
+                    while(BB_Process())
+                        ;
+                    s_last_close_succeeded = (BB_Close() == 0);
+                    s_file_open = false;
+                }
+
                 while (BB_Init() != 0)
                     osDelay(500); // 挂载失败，定期重试而非直接卡死
                 BB_BufferInit();
+                s_last_close_succeeded = false;
+                s_file_open = true;
             }
         }
 

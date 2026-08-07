@@ -44,6 +44,9 @@ static const BeepStep_t s_pat_gyro_cal_success[] = {{50, 50}, {150, 0}};    // �
 static const BeepStep_t s_pat_level_trim_started[] = {{80, 80}, {80, 80}, {80, 0}};    // 三短
 static const BeepStep_t s_pat_level_trim_success[] = {{80, 80}, {250, 0}};  // 短+长
 static const BeepStep_t s_pat_level_trim_failed[] = {{400, 120}, {80, 120}, {80, 0}};   // 长+两短
+static const BeepStep_t s_pat_mag_cal_started[] = {{70, 60}, {70, 60}, {70, 60}, {70, 0}};      // 四短
+static const BeepStep_t s_pat_mag_cal_done[] = {{80, 80}, {80, 80}, {300, 0}};      // 两短+长
+static const BeepStep_t s_pat_mag_cal_failed[] = {{450, 120}, {100, 0}};        // 长+中
 
 /**
  * @brief   按事件类型返回对应节拍
@@ -167,6 +170,27 @@ static const IndicatorPattern_t *Indicator_GetPattern(IndicatorEvent_t evt)
         static const IndicatorPattern_t pat = {s_pat_level_trim_failed,
                                              3,
                                              INDICATOR_PRIO_WARNING};
+        return &pat;
+    }
+    case EVT_MAG_CAL_CAPTURE_STARTED:
+    {
+        static const IndicatorPattern_t pat = {s_pat_mag_cal_started,
+                                               4,
+                                               INDICATOR_PRIO_NOTICE};
+        return &pat;
+    }
+    case EVT_MAG_CAL_CAPTURE_DONE:
+    {
+        static const IndicatorPattern_t pat = {s_pat_mag_cal_done,
+                                               3,
+                                               INDICATOR_PRIO_NOTICE};
+        return &pat;
+    }
+    case EVT_MAG_CAL_CAPTURE_FAILED:
+    {
+        static const IndicatorPattern_t pat = {s_pat_mag_cal_failed,
+                                               2,
+                                               INDICATOR_PRIO_WARNING};
         return &pat;
     }
     default:

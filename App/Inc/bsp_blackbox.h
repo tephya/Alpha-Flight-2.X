@@ -20,6 +20,7 @@ typedef enum
     BB_REC_CONTROL = 0x06,      // PID调参控制帧：旧71-byte payload
     BB_REC_CONTROL_V2 = 0x07,   // CONTROL V2：增加Yaw角目标和Yaw模式
     BB_REC_CONTROL_V3 = 0x08,   // 融合Yaw和Level Trim可观测诊断帧
+    BB_REC_MAG_CAL_SAMPLE = 0x09,
 } BB_RecType_t;
 
 typedef __packed struct
@@ -71,6 +72,10 @@ int8_t BB_LogArmChanged(uint16_t time_ms, uint8_t armed);
 int8_t BB_LogDualFault(uint16_t time_ms);
 int8_t BB_LogVoltageFault(uint16_t time_ms);
 int8_t BB_LogImuSwitch(uint16_t time_ms, uint8_t new_active_imu);
+int8_t BB_LogMagCalibration(uint32_t timestamp_cycle,
+                            float mag_x_gauss,
+                            float mag_y_gauss,
+                            float mag_z_gauss);
 
 int8_t BB_WaitReady(uint32_t timeout_ms);
 int8_t BB_Process(void);

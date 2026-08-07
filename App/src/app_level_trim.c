@@ -1,6 +1,7 @@
 #include "app_level_trim.h"
 #include "app_imu_calibration.h"
 #include "app_shared_types.h"
+#include "app_mag_calibration.h"
 #include "bsp_config_flash.h"
 #include "cmsis_os2.h"
 #include <math.h>
@@ -283,8 +284,9 @@ void LevelTrim_HandleRc(const RCChannelData_t *rc)
         rc->channels[LEVEL_TRIM_RC_CHANNEL_ARM] <= LEVEL_TRIM_ARM_OFF_MAX &&
         rc->channels[LEVEL_TRIM_RC_CHANNEL_THROTTLE] <= LEVEL_TRIM_THROTTLE_LOW_MAX &&
         rc->channels[LEVEL_TRIM_RC_CHANNEL_SE] >= LEVEL_TRIM_SE_PRESSED_MIN &&
+        !MagCalibration_IsActive() &&
         ImuCalibration_IsReady();
-    
+
     if(!eligible)
     {
         s_trigger_holding = false;

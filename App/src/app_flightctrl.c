@@ -5,6 +5,7 @@
 #include "app_arm.h"
 #include "app_level_trim.h"
 #include "app_shared_types.h"
+#include "app_mag_calibration.h"
 #include "bsp_elrs.h"
 #include "bsp_dshot.h"
 #include "bsp_qmc5883.h"
@@ -43,6 +44,7 @@ void FlightControl_Init(void)
     AngleController_Init();
     RateController_Init();
     YawEstimator_Init();
+    MagCalibration_Init();
     /* 最大输出限制为30°/s，避免航向误差直接要求过大的Yaw Rate */
     PID_Init(&pid_yaw, 1.0f, 0.0f, 0.0f, 30.0f);
 
@@ -359,6 +361,7 @@ void App_FlightCtrl_Task(void *argument)
 
         // 获取RC数据
         osMessageQueueGet(RCChannelMailboxHandle, &s_rc_last, NULL, 0);
+        MagCalibration_HandleRc(&s_rc_last);
         LevelTrim_HandleRc(&s_rc_last);
 
         Arm_Update(&s_rc_last, fc.roll_meas, fc.pitch_meas, dt);

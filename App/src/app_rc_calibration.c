@@ -1,5 +1,6 @@
 #include "app_rc_calibration.h"
 #include "app_shared_types.h"
+#include "app_mag_calibration.h"
 #include "bsp_config_flash.h"
 #include "cmsis_os2.h"
 #include <limits.h>
@@ -328,6 +329,13 @@ void RcCalibration_Update(const RCChannelData_t *raw_rc)
 {
     if(raw_rc == NULL)
         return;
+
+    if(MagCalibration_IsActive())
+    {
+        /* Mag校准翻转机体期间不允许另一状态机并行运行 */
+        RcCalibration_Cancel();
+        return;
+    }
 
     uint32_t now = osKernelGetTickCount();
     

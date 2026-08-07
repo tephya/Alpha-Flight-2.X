@@ -2,6 +2,7 @@
 #include "app_level_trim.h"
 #include "app_rc_calibration.h"
 #include "app_imu_calibration.h"
+#include "app_mag_calibration.h"
 #include "bsp_blackbox.h"
 #include "cmsis_os2.h"
 #include <math.h>
@@ -127,7 +128,8 @@ void Arm_Update(const RCChannelData_t *rc, float roll_meas, float pitch_meas, fl
         if(!RcCalibration_IsReady() || 
             RcCalibration_IsActive() || 
             !ImuCalibration_IsReady() ||
-            LevelTrim_IsActive())
+            LevelTrim_IsActive() ||
+            MagCalibration_IsActive())
         {
             return;
         }

@@ -55,6 +55,20 @@ typedef char BB_ControlRecV3SizeMustBe85[
     (sizeof(BB_ControlRec_t) == 85U) ? 1 : -1
 ];
 
+typedef __packed struct
+{
+    uint8_t magic;
+    uint8_t type;
+    uint32_t timestamp_cycle;
+    float mag_x_gauss;
+    float mag_y_gauss;
+    float mag_z_gauss;
+} BB_MagCalibrationRec_t;
+
+typedef char BB_MagCalibrationRecSizeMustBe18[
+    (sizeof(BB_MagCalibrationRec_t) == 18U) ? 1 : -1
+];
+
 /*====== 双缓冲消费状态(内部私有) ======*/
 typedef enum
 {
@@ -255,6 +269,23 @@ int8_t BB_LogControl(const BB_ControlData_t *data)
     rec.magic = BB_FRAME_MAGIC;
     rec.type = BB_REC_CONTROL_V3;
     rec.data = *data;
+
+    return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));
+}
+
+int8_t BB_LogMagCalibration(uint32_t timestamp_cycle,
+                            float mag_x_gauss,
+                            float mag_y_gauss,
+                            float mag_z_gauss)
+{
+    BB_MagCalibrationRec_t rec;
+
+    rec.magic = BB_FRAME_MAGIC;
+    rec.type = BB_REC_MAG_CAL_SAMPLE;
+    rec.timestamp_cycle = timestamp_cycle;
+    rec.mag_x_gauss = mag_x_gauss;
+    rec.mag_y_gauss = mag_y_gauss;
+    rec.mag_z_gauss = mag_z_gauss;
 
     return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));
 }

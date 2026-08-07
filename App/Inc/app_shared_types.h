@@ -92,6 +92,9 @@ typedef enum
     EVT_LEVEL_TRIM_STARTED = 13, // Level Trim开始采样
     EVT_LEVEL_TRIM_SUCCESS = 14, // Level Trim保存成功
     EVT_LEVEL_TRIM_FAILED = 15,  // Level Trim失败，旧配置保持不变
+    EVT_MAG_CAL_CAPTURE_STARTED = 16,   // 开始Mag校准采样
+    EVT_MAG_CAL_CAPTURE_DONE = 17,      // 结束Mag校准采样
+    EVT_MAG_CAL_CAPTURE_FAILED = 18,    // Mag校准采样失败
 }
 IndicatorEvent_t;
 

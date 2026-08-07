@@ -1,4 +1,5 @@
 #include "app_nav.h"
+#include "app_mag_calibration.h"
 #include "bsp_gps.h"
 #include "bsp_qmc5883.h"
 #include "app_shared_types.h"
@@ -99,6 +100,10 @@ void App_Nav_Task(void *argument)
              * OVFL样本仍发布给YawEstimator，由其记录明确的拒绝原因，
              * 但SYSREADY_BIT_MAG_OK必须保持清除。 */
             QMC_CopyTo(&mag);
+            // 标定采集需在校正前
+            MagCalibration_LogSample(&mag);
+            // 校正Mag NED向量
+            MagCalibration_Apply(&mag);
 
             if(!mag.ovfl)
                 osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_MAG_OK);

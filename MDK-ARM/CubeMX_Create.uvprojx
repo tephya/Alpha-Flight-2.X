@@ -479,6 +479,11 @@
               <FilePath>..\App\Src\app_level_trim.c</FilePath>
             </File>
             <File>
+              <FileName>app_mag_calibration.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\App\Src\app_mag_calibration.c</FilePath>
+            </File>
+            <File>
               <FileName>bsp_buzzer.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\App\src\bsp_buzzer.c</FilePath>
