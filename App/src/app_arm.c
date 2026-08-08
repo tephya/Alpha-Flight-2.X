@@ -18,7 +18,7 @@ extern osMessageQueueId_t IndicatorEventQueueHandle;
 #define ARM_RC_CHANNEL_SWITCH 4
 #define ARM_RC_CHANNEL_THROTTLE 2
 #define ARM_SWITCH_ON_THRESHOLD 1000
-#define ARM_THROTTLE_LOW_MAX 180
+#define ARM_THROTTLE_LOW_MAX 200
 #define ARM_TILT_LIMIT_DEG 30.0f
 
 #define CRASH_CONFIRM_TILT_DEG 50.0f    // 超过50°持续100ms认为飞行器已经失控或倾倒

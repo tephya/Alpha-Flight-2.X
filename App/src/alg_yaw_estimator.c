@@ -171,7 +171,8 @@ static bool YawEstimator_CalculateMagHeading(const MagData_t *mag,
     const float my_horizontal = cos_roll * mag->MY - sin_roll * mag->MZ;
     const float mz_after_roll = sin_roll * mag->MY + cos_roll * mag->MZ;
     const float mx_horizontal = cos_pitch * mag->MX + sin_pitch * mz_after_roll;
-    const float heading = atan2f(-my_horizontal, mx_horizontal);
+    /* 与当前Gyro Yaw正方向保持一致 */
+    const float heading = atan2f(my_horizontal, mx_horizontal);
 
     if(!YawEstimator_FloatIsFinite(heading))
         return false;

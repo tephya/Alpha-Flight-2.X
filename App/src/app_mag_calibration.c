@@ -22,7 +22,7 @@ extern osMessageQueueId_t IndicatorEventQueueHandle;
 #define MAG_CAL_SB_HIGH_MIN 1600U
 
 #define MAG_CAL_ARM_OFF_MAX 900U
-#define MAG_CAL_THROTTLE_LOW_MAX 180U
+#define MAG_CAL_THROTTLE_LOW_MAX 200U
 #define MAG_CAL_TRIGGER_HOLD_MS 3000U
 
 #define MAG_CAL_MIN_SAMPLE_COUNT 1500U  // 50Hz下约为30s
