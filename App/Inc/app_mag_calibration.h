@@ -28,6 +28,12 @@ void MagCalibration_LogSample(const MagData_t *mag);
 void MagCalibration_Apply(MagData_t *mag);
 
 /**
+ * @brief   获取Hard/Soft-Iron拟合得到的参考磁场模长。
+ * @return  校正后磁场参考值，单位Gauss。
+ */
+float MagCalibration_GetFieldReferenceGauss(void);
+
+/**
  * @brief   查询校准采集是否正在触发、打开、采集或关闭阶段。
  * @note    true时Arm状态机必须禁止解锁。
  */

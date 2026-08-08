@@ -99,21 +99,21 @@ void PID_SetOutputLimit(PID_t *pid,
     pid->output_limit = limit;
 }
 
-/**
- * @brief  动态更新 PID 输出值
- * @param  *pid	 		要更新的 PID 控制器实体指针
- * @param  measurement		当前测量值
- * @param  dt				距离上一次更新的时间间隔
- */
-float PID_Update(PID_t *pid,
-                 float measurement,
-                 float dt)
+static float PID_UpdateInternal(PID_t *pid,
+                                float measurement,
+                                float dt,
+                                float integral_growth_sacle)
 {
     if (dt < 0.0005f)
         dt = 0.0005f;
 
     pid->measurement = measurement;
     pid->error = pid->target - measurement;
+
+    if(integral_growth_sacle < 0.0f)
+        integral_growth_sacle = 0.0f;
+    else if(integral_growth_sacle > 1.0f)
+        integral_growth_sacle = 1.0f;
 
     /* Integral - Dynamic Anti-Windup */
     uint8_t stop_integration = 0;
@@ -125,9 +125,24 @@ float PID_Update(PID_t *pid,
         stop_integration = 1;
     }
 
+    /* 禁止Integral增长时，仍允许方向相反的误差卸载已有Integral。
+     * 这样既防止大Yaw指令期间继续Windup，也不会锁死已有偏置补偿。 */
+    const uint8_t integral_unwinding =
+        ((pid->integral > 0.0f) && (pid->error < 0.0f)) ||
+        ((pid->integral < 0.0f) && (pid->error > 0.0f));
+
     if (!stop_integration)
     {
-        pid->integral += pid->error * dt;
+        if(integral_unwinding)
+        {
+            /* 卸载已有Integral始终使用完整速度 */
+            pid->integral += pid->error * dt;
+        }
+        else if(integral_growth_sacle > 0.0f)
+        {
+            /* 同方向增长根据当前Yaw Rate目标逐渐放缓 */
+            pid->integral += pid->error * dt * integral_growth_sacle;
+        }
     }
 
     // 静态保底限幅，防止变量在长时间轻微误差下缓慢越界
@@ -197,4 +212,25 @@ float PID_Update(PID_t *pid,
     pid->last_error = pid->error;
 
     return pid->output;
+}
+
+/**
+ * @brief  动态更新 PID 输出值
+ * @param  *pid	 		要更新的 PID 控制器实体指针
+ * @param  measurement		当前测量值
+ * @param  dt				距离上一次更新的时间间隔
+ */
+float PID_Update(PID_t *pid,
+                 float measurement,
+                 float dt)
+{
+    return PID_UpdateInternal(pid, measurement, dt, 1.0f);
+}
+
+float PID_UpdateWithIntegralScale(PID_t *pid,
+                                  float measurement,
+                                  float dt,
+                                  float integral_growth_scale)
+{
+    return PID_UpdateInternal(pid, measurement, dt, integral_growth_scale);
 }

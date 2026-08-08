@@ -3,6 +3,16 @@
 
 #include "bsp_qmc5883.h"
 #include <stdbool.h>
+#include <stdint.h>
+
+typedef enum
+{
+    YAW_MAG_REJECT_NONE = 0U,
+    YAW_MAG_REJECT_INVALID_SAMPLE = (1U << 0),
+    YAW_MAG_REJECT_ABSOULTE_FIELD = (1U << 1),
+    YAW_MAG_REJECT_FIELD_RATIO = (1U << 2),
+    YAW_MAG_REJECT_INNOVATION = (1U << 3),
+} YawMagRejectReason_t;
 
 typedef struct
 {
@@ -10,12 +20,20 @@ typedef struct
     float mag_yaw_rad;              // 最近一次倾斜补偿后的原始Mag航向
     float mag_innovation_rad;       // wrap(mag_yaw - fused_yaw)
     float mag_field_norm_gauss;     // 最近一次Mag三轴模长
+
+    float mag_field_reference_gauss;   // 当前门限使用的磁场参考值
+    float mag_field_ratio;              // norm/reference
+    uint8_t mag_reject_reason;          // YawMagRejectReason_t位掩码
+
     bool initialized;               
     bool mag_accepted;              // 最近一次Mag样本是否通过门限并参与校正
 } YawEstimatorDiagnostics_t;
 
-/** @brief  初始化Yaw estimator；首次有效Mag样本将建立绝对航向。 */
-void YawEstimator_Init(void);
+/**
+ * @brief   初始化Yaw estimator；首次有效Mag样本将建立绝对航向。
+ * @param   field_reference_gauss  Hard/Soft-Iron拟合得到的参考磁场模长，单位Gauss。
+ */
+void YawEstimator_Init(float field_reference_gauss);
 
 /**
  * @brief   使用active IMU的Z轴Gyro推进航向。

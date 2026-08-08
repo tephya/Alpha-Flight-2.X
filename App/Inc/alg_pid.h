@@ -58,4 +58,14 @@ float PID_Update(PID_t *pid,
                  float measurement,
                  float dt);
 
+/**
+ * @brief   更新PID，并按比例控制Integral继续增长的速度。
+ * @param   integral_growth_scale   积分增长比例，范围0.0~1.0，
+ *                                  反向误差卸载Integral时不受此比例限制。
+ */
+float PID_UpdateWithIntegralScale(PID_t *pid,
+                                  float measurement,
+                                  float dt,
+                                  float integral_growth_scale);
+
 #endif

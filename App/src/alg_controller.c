@@ -1,7 +1,27 @@
 #include "alg_controller.h"
+#include <math.h>
+
+/* 当前Heading Hold外环Kp为1.0，因此5°航向误差对应5°/s目标。
+ * 超过此范围时，Yaw Rate I只允许卸载，不允许继续增大。 */
+#define YAW_RATE_I_RELAX_START_DPS 5.0f
+#define YAW_RATE_I_RELAX_END_DPS 20.0f
 
 AngleController_t angle_controller;
 RateController_t rate_controller;
+
+static float RateController_GetYawIntegralGrowthScale(float yaw_rate_target)
+{
+    const float target_abs = fabsf(yaw_rate_target);
+
+    if(target_abs <= YAW_RATE_I_RELAX_START_DPS)
+        return 1.0f;
+
+    if(target_abs >= YAW_RATE_I_RELAX_END_DPS)
+        return 0.0f;
+
+    return (YAW_RATE_I_RELAX_END_DPS - target_abs) /
+           (YAW_RATE_I_RELAX_END_DPS - YAW_RATE_I_RELAX_START_DPS);
+}
 
 /*========== 角度控制器(PID外环) =========*/
 void AngleController_Init(void)
@@ -43,7 +63,7 @@ void RateController_Init(void)
     PID_Init(&rate_controller.roll,  0.65f, 0.10f, 0.000f, 120.0f);
     PID_Init(&rate_controller.pitch, 0.65f, 0.10f, 0.000f, 120.0f);
     /* Yaw暂时保持原参数，本轮主要定位Roll/Pitch振荡。 */
-    PID_Init(&rate_controller.yaw,   2.00f, 0.10f, 0.000f, 200.0f);
+    PID_Init(&rate_controller.yaw,   2.00f, 0.15f, 0.000f, 200.0f);
 }
 
 void RateController_Reset(void)
@@ -71,7 +91,15 @@ void RateController_Update(float roll_rate_target,
 
     rate_controller.roll_output = PID_Update(&rate_controller.roll, roll_rate, dt);
     rate_controller.pitch_output = PID_Update(&rate_controller.pitch, pitch_rate, dt);
-    rate_controller.yaw_output = PID_Update(&rate_controller.yaw, yaw_rate, dt);
+
+    const float yaw_integral_growth_scale =
+        RateController_GetYawIntegralGrowthScale(yaw_rate_target);
+
+    rate_controller.yaw_output = PID_UpdateWithIntegralScale(
+        &rate_controller.yaw,
+        yaw_rate,
+        dt,
+        yaw_integral_growth_scale);
 }
 
 /*========= 航向锁定 ==========*/

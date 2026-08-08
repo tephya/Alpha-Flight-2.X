@@ -45,19 +45,19 @@ typedef struct
 static const MagCalibrationConfig_t s_mag_calibration =
 {
     .bias = {
-        0.777633692f,
-        -1.131458540f,
-        0.921689385f,
+        0.769966473f,
+        -1.132992138f,
+        0.907445057f
     },
     .soft_matrix_sym = {
-        1.012112088f,
-        0.024130066f,
-        0.006713267f,
-        0.985058770f,
-        -0.005159549f,
-        1.007059819f,
+        1.007267649f,
+        0.029346188f,
+        0.008633474f,
+        0.990599558f,
+        0.004140657f,
+        1.003350263f
     },
-    .field_reference_gauss = 0.458847875f,
+    .field_reference_gauss = 0.473539573f,
 };
 
 typedef enum {
@@ -284,6 +284,11 @@ void MagCalibration_Apply(MagData_t *mag)
     mag->MX = a[0] * x + a[1] * y + a[2] * z;
     mag->MY = a[1] * x + a[3] * y + a[4] * z;
     mag->MZ = a[2] * x + a[4] * y + a[5] * z;
+}
+
+float MagCalibration_GetFieldReferenceGauss(void)
+{
+    return s_mag_calibration.field_reference_gauss;
 }
 
 bool MagCalibration_IsActive(void)

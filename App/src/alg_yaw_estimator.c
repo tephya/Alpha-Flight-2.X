@@ -129,6 +129,9 @@ static bool YawEstimator_TryReacquireMag(float mag_yaw_rad,
     s_yaw.diag.mag_field_norm_gauss = field_norm_gauss;
     s_yaw.diag.mag_accepted = true;
 
+    s_yaw.diag.mag_field_ratio = 1.0f;
+    s_yaw.diag.mag_reject_reason = YAW_MAG_REJECT_NONE;
+
     s_yaw.field_reference_gauss = field_norm_gauss;
 
     YawEstimator_ResetMagReacquire();
@@ -139,15 +142,25 @@ static bool YawEstimator_CalculateMagHeading(const MagData_t *mag,
                                             float roll_rad,
                                             float pitch_rad,
                                             float *heading_rad,
-                                            float *field_norm_gauss)
+                                            float *field_norm_gauss,
+                                            uint8_t *reject_reason)
 {
-    if(mag == NULL || heading_rad == NULL || field_norm_gauss == NULL || mag->ovfl)
+    if(reject_reason == NULL)
         return false;
+
+    *reject_reason = YAW_MAG_REJECT_NONE;
+
+    if(mag == NULL || heading_rad == NULL || field_norm_gauss == NULL || mag->ovfl)
+    {
+        *reject_reason |= YAW_MAG_REJECT_INVALID_SAMPLE;
+        return false;
+    }
 
     if (!YawEstimator_FloatIsFinite(mag->MX) ||
         !YawEstimator_FloatIsFinite(mag->MY) ||
         !YawEstimator_FloatIsFinite(mag->MZ))
     {
+        *reject_reason |= YAW_MAG_REJECT_INVALID_SAMPLE;
         return false;
     }
 
@@ -155,9 +168,13 @@ static bool YawEstimator_CalculateMagHeading(const MagData_t *mag,
                                    mag->MY * mag->MY +
                                    mag->MZ * mag->MZ);
 
+    /* 即使触发绝对场强门限，也保留原始模长供诊断 */
+    *field_norm_gauss = field_norm;
+
     if(field_norm < YAW_MAG_MIN_FIELD_GAUSS ||
         field_norm > YAW_MAG_MAX_FIELD_GAUSS)
     {
+        *reject_reason |= YAW_MAG_REJECT_ABSOULTE_FIELD;
         return false;
     }
 
@@ -175,16 +192,27 @@ static bool YawEstimator_CalculateMagHeading(const MagData_t *mag,
     const float heading = atan2f(my_horizontal, mx_horizontal);
 
     if(!YawEstimator_FloatIsFinite(heading))
+    {
+        *reject_reason |= YAW_MAG_REJECT_INVALID_SAMPLE;
         return false;
+    }
 
     *heading_rad = heading;
-    *field_norm_gauss = field_norm;
     return true;
 }
 
-void YawEstimator_Init(void)
+void YawEstimator_Init(float field_reference_gauss)
 {
     memset(&s_yaw, 0, sizeof(s_yaw));
+
+    /* 优先使用Hard/Soft-Iron拟合得到的参考值建立上电基准。
+     * 配置值异常时保持为0，由首次有效Mag样本回退建立参考。 */
+    if(YawEstimator_FloatIsFinite(field_reference_gauss) &&
+        field_reference_gauss > YAW_MAG_MIN_FIELD_GAUSS &&
+        field_reference_gauss < YAW_MAG_MAX_FIELD_GAUSS)
+    {
+        s_yaw.field_reference_gauss = field_reference_gauss;
+    }
 }
 
 void YawEstimator_UpdateGyro(float gz_dps, float dt_s)
@@ -207,16 +235,23 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
                              float pitch_rad,
                              bool is_disarmed)
 {
-    float mag_yaw_rad;
-    float field_norm_gauss;
+    float mag_yaw_rad = 0.0f;
+    float field_norm_gauss = 0.0f;
+    uint8_t reject_reason = YAW_MAG_REJECT_NONE;
 
     s_yaw.diag.mag_accepted = false;
-    
+    s_yaw.diag.mag_field_ratio = 0.0f;
+    s_yaw.diag.mag_reject_reason = YAW_MAG_REJECT_NONE;
+
     if(!YawEstimator_CalculateMagHeading(mag,
                                         roll_rad,
                                         pitch_rad,
-                                        &mag_yaw_rad, &field_norm_gauss))
+                                        &mag_yaw_rad, &field_norm_gauss,
+                                        &reject_reason))
     {
+        s_yaw.diag.mag_field_norm_gauss = field_norm_gauss;
+        s_yaw.diag.mag_reject_reason = reject_reason;
+
         /* 无效样本会中断“连续稳定”的重新捕获确认 */
         YawEstimator_ResetMagReacquire();
         return false;
@@ -231,7 +266,17 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
     {
         s_yaw.diag.yaw_rad = mag_yaw_rad;
         s_yaw.diag.mag_innovation_rad = 0.0f;
-        s_yaw.field_reference_gauss = field_norm_gauss;
+        s_yaw.diag.mag_reject_reason = YAW_MAG_REJECT_NONE;
+
+        /* 拟合参考值有效时不再被首帧覆盖；只有配置无效才回退到当前模长。 */
+        if(s_yaw.field_reference_gauss <= YAW_MAG_MIN_FIELD_GAUSS ||
+            s_yaw.field_reference_gauss >= YAW_MAG_MAX_FIELD_GAUSS)
+        {
+            s_yaw.field_reference_gauss = field_norm_gauss;
+        }
+
+        s_yaw.diag.mag_field_ratio =
+            field_norm_gauss / s_yaw.field_reference_gauss;
         s_yaw.diag.initialized = true;
         s_yaw.diag.mag_accepted = true;
 
@@ -246,15 +291,26 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
     const float innovation_rad = YawEstimator_WrapPi(
         mag_yaw_rad - s_yaw.diag.yaw_rad);
 
+    s_yaw.diag.mag_field_ratio = field_ratio;
     s_yaw.diag.mag_innovation_rad = innovation_rad;
 
     const bool field_rejected =
         field_ratio < YAW_MAG_FILED_RATIO_MIN ||
         field_ratio > YAW_MAG_FILED_RATIO_MAX;
 
+    if(field_rejected)
+    {
+        s_yaw.diag.mag_reject_reason |= YAW_MAG_REJECT_FIELD_RATIO;
+    }
+
     const bool innovation_rejected = fabsf(innovation_rad) > YAW_MAG_INNOVATION_GATE_RAD;
 
-    if(field_rejected || innovation_rejected)
+    if(innovation_rejected)
+    {
+        s_yaw.diag.mag_reject_reason |= YAW_MAG_REJECT_INNOVATION;
+    }
+
+    if(s_yaw.diag.mag_reject_reason != YAW_MAG_REJECT_NONE)
     {
         /* Armed时继续拒绝异常Mag，
          * Disarmed时则检测Mag是否已连续稳定，满足条件后重新捕获 */
@@ -268,6 +324,7 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
     s_yaw.diag.yaw_rad = YawEstimator_WrapPi(
         s_yaw.diag.yaw_rad + YAW_MAG_CORRECTION_GAIN * innovation_rad);
     s_yaw.diag.mag_accepted = true;
+    s_yaw.diag.mag_reject_reason = YAW_MAG_REJECT_NONE;
 
     /* 正常融合已经恢复，不再需要重新捕获候选序列 */
     YawEstimator_ResetMagReacquire();
@@ -295,6 +352,9 @@ bool YawEstimator_IsInitialized(void)
 
 void YawEstimator_CopyDiagnostics(YawEstimatorDiagnostics_t *out)
 {
-    if(out != NULL)
-        *out = s_yaw.diag;
+    if(out == NULL)
+        return;
+
+    *out = s_yaw.diag;
+    out->mag_field_reference_gauss = s_yaw.field_reference_gauss;
 }

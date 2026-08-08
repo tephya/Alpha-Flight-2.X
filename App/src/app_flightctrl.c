@@ -43,8 +43,9 @@ void FlightControl_Init(void)
 {
     AngleController_Init();
     RateController_Init();
-    YawEstimator_Init();
+    /* 先初始化Mag Cali，在把参考场强传给YawEstimator */
     MagCalibration_Init();
+    YawEstimator_Init(MagCalibration_GetFieldReferenceGauss());
     /* 最大输出限制为30°/s，避免航向误差直接要求过大的Yaw Rate */
     PID_Init(&pid_yaw, 1.0f, 0.0f, 0.0f, 30.0f);
 
@@ -442,6 +443,10 @@ void App_FlightCtrl_Task(void *argument)
 
             YawEstimatorDiagnostics_t yaw_diag;
             YawEstimator_CopyDiagnostics(&yaw_diag);
+
+            log.mag_field_reference_mG = BB_ToUInt16(yaw_diag.mag_field_reference_gauss, 1000.0f);
+            log.mag_field_ratio_permille = BB_ToUInt16(yaw_diag.mag_field_ratio, 1000.0f);
+            log.mag_reject_reason = yaw_diag.mag_reject_reason;
 
             if(yaw_diag.initialized)
             {

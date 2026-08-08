@@ -20,7 +20,8 @@ typedef enum
     BB_REC_CONTROL = 0x06,      // PID调参控制帧：旧71-byte payload
     BB_REC_CONTROL_V2 = 0x07,   // CONTROL V2：增加Yaw角目标和Yaw模式
     BB_REC_CONTROL_V3 = 0x08,   // 融合Yaw和Level Trim可观测诊断帧
-    BB_REC_MAG_CAL_SAMPLE = 0x09,
+    BB_REC_MAG_CAL_SAMPLE = 0x09,   // MAG校准数据采样事件
+    BB_REC_CONTROL_V4 = 0x0A,       // V4：增加MAG拒绝原因和参考磁场
 } BB_RecType_t;
 
 typedef __packed struct
@@ -34,6 +35,9 @@ typedef __packed struct
     int16_t mag_yaw_cdeg;        // 最近一次倾斜补偿后的原始Mag航向，0.01°
     int16_t yaw_mag_innovation_cdeg;        // wrap(Mag_Yaw - fused_Yaw)，0.01°
     uint16_t mag_field_mG;       // Mag三轴模长，milli-gauss
+    uint16_t mag_field_reference_mG;    // 当前参考磁场
+    uint16_t mag_field_ratio_permille;  // norm/reference
+    uint8_t mag_reject_reason;          // YawMagRejectReason_t位掩码
 
     int16_t rate_target_ddps[3]; // 目标角速度，0.1°/s
     int16_t rate_meas_ddps[3];   // Gyro角速度，0.1°/s

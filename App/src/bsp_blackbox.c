@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
-/* 200Hz CONTROL日志约14.6KB/s。4KB双缓冲可吸收约560ms的SD卡短时停顿，
+/* 200Hz CONTROL V4日志约18KB/s。4KB双缓冲可吸收约455ms的SD卡短时停顿，
  * 同时使用整扇区倍数写盘，减少512-byte双缓冲过小导致的瞬时溢出。 */
 #define LOG_BUF_SIZE 4096U
 
@@ -51,8 +51,8 @@ typedef __packed struct
     BB_ControlData_t data;
 } BB_ControlRec_t;
 
-typedef char BB_ControlRecV3SizeMustBe85[
-    (sizeof(BB_ControlRec_t) == 85U) ? 1 : -1
+typedef char BB_ControlRecV4SizeMustBe90[
+    (sizeof(BB_ControlRec_t) == 90U) ? 1 : -1
 ];
 
 typedef __packed struct
@@ -267,7 +267,7 @@ int8_t BB_LogControl(const BB_ControlData_t *data)
     BB_ControlRec_t rec;
 
     rec.magic = BB_FRAME_MAGIC;
-    rec.type = BB_REC_CONTROL_V3;
+    rec.type = BB_REC_CONTROL_V4;
     rec.data = *data;
 
     return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));
