@@ -47,7 +47,7 @@
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN PFP */
-
+void HardFault_Capture(uint32_t *raw_sp, uint32_t exc_return);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -67,6 +67,59 @@ extern UART_HandleTypeDef huart4;
 extern TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN EV */
+
+volatile uint32_t g_hf_exc_return;
+volatile uint32_t g_hf_raw_sp;
+volatile uint32_t g_hf_core_sp;
+
+volatile uint32_t g_hf_r0;
+volatile uint32_t g_hf_r1;
+volatile uint32_t g_hf_r2;
+volatile uint32_t g_hf_r3;
+volatile uint32_t g_hf_r12;
+volatile uint32_t g_hf_lr;
+volatile uint32_t g_hf_pc;
+volatile uint32_t g_hf_xpsr;
+
+volatile uint32_t g_hf_cfsr;
+volatile uint32_t g_hf_hfsr;
+volatile uint32_t g_hf_bfar;
+volatile uint32_t g_hf_mmfar;
+
+void HardFault_Capture(uint32_t *raw_sp, uint32_t exc_return)
+{
+  uint32_t *core_sp = raw_sp;
+
+  /* EXC_RETURN bit4为0表示存在扩展FPU帧；
+   * 跳过S0~S15、FPSCR和保留字，共18个word。 */
+  if ((exc_return & 0x10U) == 0U)
+  {
+    core_sp += 18U;
+  }
+
+  g_hf_exc_return = exc_return;
+  g_hf_raw_sp = (uint32_t)raw_sp;
+  g_hf_core_sp = (uint32_t)core_sp;
+
+  g_hf_r0 = core_sp[0];
+  g_hf_r1 = core_sp[1];
+  g_hf_r2 = core_sp[2];
+  g_hf_r3 = core_sp[3];
+  g_hf_r12 = core_sp[4];
+  g_hf_lr = core_sp[5];
+  g_hf_pc = core_sp[6];
+  g_hf_xpsr = core_sp[7];
+
+  g_hf_cfsr = SCB->CFSR;
+  g_hf_hfsr = SCB->HFSR;
+  g_hf_bfar = SCB->BFAR;
+  g_hf_mmfar = SCB->MMFAR;
+
+  while (1)
+  {
+    __NOP();
+  }
+}
 
 /* USER CODE END EV */
 
@@ -91,16 +144,28 @@ void NMI_Handler(void)
 /**
   * @brief This function handles Hard fault interrupt.
   */
-void HardFault_Handler(void)
-{
-  /* USER CODE BEGIN HardFault_IRQn 0 */
+//void HardFault_Handler(void)
+//{
+//  /* USER CODE BEGIN HardFault_IRQn 0 */
 
-  /* USER CODE END HardFault_IRQn 0 */
-  while (1)
-  {
-    /* USER CODE BEGIN W1_HardFault_IRQn 0 */
-    /* USER CODE END W1_HardFault_IRQn 0 */
-  }
+//  /* USER CODE END HardFault_IRQn 0 */
+//  while (1)
+//  {
+//    /* USER CODE BEGIN W1_HardFault_IRQn 0 */
+//    /* USER CODE END W1_HardFault_IRQn 0 */
+//  }
+//}
+
+__asm void HardFault_Handler(void)
+{
+    IMPORT HardFault_Capture
+
+    TST     LR, #4
+    ITE     EQ
+    MRSEQ   R0, MSP
+    MRSNE   R0, PSP
+    MOV     R1, LR
+    B       HardFault_Capture
 }
 
 /**

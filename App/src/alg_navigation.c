@@ -25,7 +25,7 @@
 
 /* 速度控制器(PI控制)相关参数 */
 #define VELOCITY_KP 1.20f
-#define VELOCITY_KI 0.25f
+#define VELOCITY_KI 0.50f
 #define VELOCITY_INEGRAL_ACCEL_LIMIT_MPS2 0.80f     // 积分项加速度限幅(m/s^2)，防止积分饱和
 #define VELOCITY_ACCEL_LIMIT_MPS2 2.00f             // 总目标加速度输出限幅
 #define VELOCITY_ANGLE_LIMIT_DEG 12.0f              // 输出姿态角(Roll/Pitch)限幅(度)
@@ -37,7 +37,7 @@
 
 #define POSITION_KP 0.70f                           // 位置控制比例P增益系数
 #define POSITION_DEADBAND_M 0.10f                   // 位置死区半径(m)，进入此范围消除静态差补偿，防常态GPS漂移引发的晃动
-#define POSITION_PILOT_SPEED_LIMIT_MPS 1.00f        // 外部摇杆干预改变目标点时的最高前馈移速限制(m/s)
+#define POSITION_PILOT_SPEED_LIMIT_MPS 1.50f        // 外部摇杆干预改变目标点时的最高前馈移速限制(m/s)
 #define POSITION_VELOCITY_LIMIT_MPS 1.20f           // 最终输出给内环(速度环)的N/E合成目标速度绝对上限(m/s)
 #define POSITION_MAX_ERROR_M 30.0f                  // 单次允许的最大位置误差跟踪阈值(m)
 
@@ -199,7 +199,7 @@ void HorizontalEstimator_Predict(float ax_g,
 
     /* NED下的R_body_to_ned前两行。静止时重力旋转只所在Down轴，
      * 因此这里的N/E分量理论上为0（仅代表载体的运动加速度）。
-     * 通过旋转矩阵将机体坐标系下的加速度转换到北东地(NED)坐标系的 北(N) 和 动(E) 方向。 */
+     * 通过旋转矩阵将机体坐标系下的加速度转换到北东地(NED)坐标系的 北(N) 和 东(E) 方向。 */
     const float measured_n_g =
         (cp * cy) * ax_g +
         (sr * sp * cy - cr * sy) * ay_g +

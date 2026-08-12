@@ -40,7 +40,7 @@
 #define HORIZONTAL_MODE_SC_HIGH_MIN 1600U
 
 #define VELOCITY_HOLD_MAX_SPEED_MPS 2.0f
-#define POSITION_HOLD_PILOT_SPEED_MPS 1.0f
+#define POSITION_HOLD_PILOT_SPEED_MPS 1.50f
 #define HORIZONTAL_MODE_ENTRY_MIN_THROTTLE 400U
 
 #define HORIZONTAL_PILOT_INPUT_MAX_DEG 30.0f
@@ -455,9 +455,6 @@ static void FlightControl_UpdateHorizontalMode(float dt)
                                          &pilot_velocity_n_mps,
                                          &pilot_velocity_e_mps);
 
-        const PositionControlPhase_t previous_position_phase =
-            position_controller.phase;
-
         if(!PositionController_Update(s_nav_last.gps_lat,
                                         s_nav_last.gps_lon,
                                         s_nav_last.rmc_sequence,
@@ -470,12 +467,6 @@ static void FlightControl_UpdateHorizontalMode(float dt)
             s_horizontal_manual_seen = 0U;
             FlightControl_RefreshHorizontalModeFlags(requested);
             return;
-        }
-
-        if(previous_position_phase != POSITION_CONTROL_PHASE_MOVING &&
-            position_controller.phase == POSITION_CONTROL_PHASE_MOVING)
-        {
-            VelocityController_ResetIntegral();
         }
 
         s_velocity_target_n_mps =
@@ -585,8 +576,15 @@ static void FlightControl_Update(float dt, float gx, float gy, float gz)
     fc.roll_rate_target = angle_controller.roll_rate_target;
     fc.pitch_rate_target = angle_controller.pitch_rate_target;
 
+    /* 当前仅在Position Hold中使用Rate Feedforward，
+     * 保持Manual和Velocity Hold原有控制手感不变。 */
+    RateController_SetRollPitchFeedForwardEnabled(
+        (s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) ? 1U : 0U);
+
     /* 角速度环(内环) */
-    RateController_Update(fc.roll_rate_target, fc.pitch_rate_target, fc.yaw_rate_target,
+    RateController_Update(fc.roll_rate_target,
+                          fc.pitch_rate_target,
+                          fc.yaw_rate_target,
                           gx, gy, gz, dt);
 
     fc.roll_cmd = rate_controller.roll_output;

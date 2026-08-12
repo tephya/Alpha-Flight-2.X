@@ -6,6 +6,10 @@
 #define YAW_RATE_I_RELAX_START_DPS 5.0f
 #define YAW_RATE_I_RELAX_END_DPS 20.0f
 
+#define ROLL_RATE_FF_GAIN 0.50f
+#define PITCH_RATE_FF_GAIN 0.40f
+#define RATE_FF_LIMIT 10.0f
+
 /*========== 遥控通道映射 =========*/
 
 #define RC_NORMALIZED_MIN 172U
@@ -14,6 +18,18 @@
 
 AngleController_t angle_controller;
 RateController_t rate_controller;
+
+static uint8_t s_roll_pitch_rate_ff_enabled;
+
+static float RateController_Limit(float value, float limit)
+{
+    if(value > limit)
+        return limit;
+    if(value < -limit)
+        return -limit;
+
+    return value;
+}
 
 /**
  * @brief   根据Yaw目标角速度计算积分项(I)的增长缩放因子。
@@ -67,8 +83,8 @@ static float Map_CenteredChannel(uint16_t ch, float magnitude)
 
 void AngleController_Init(void)
 {
-    PID_Init(&angle_controller.roll, 3.5f, 0.0f, 0.0f, 250.0f);
-    PID_Init(&angle_controller.pitch, 3.5f, 0.0f, 0.0f, 250.0f);
+    PID_Init(&angle_controller.roll, 4.20f, 0.0f, 0.0f, 250.0f);
+    PID_Init(&angle_controller.pitch, 4.20f, 0.0f, 0.0f, 250.0f);
 
     angle_controller.roll_rate_target = 0.0f;
     angle_controller.pitch_rate_target = 0.0f;
@@ -100,8 +116,8 @@ void AngleController_Update(float roll_target,
 
 void RateController_Init(void)
 {
-    PID_Init(&rate_controller.roll,  1.10f, 0.10f, 0.000f, 120.0f);
-    PID_Init(&rate_controller.pitch, 1.05f, 0.10f, 0.000f, 120.0f);
+    PID_Init(&rate_controller.roll,  1.30f, 0.10f, 0.000f, 120.0f);
+    PID_Init(&rate_controller.pitch, 1.25f, 0.10f, 0.000f, 120.0f);
     PID_Init(&rate_controller.yaw,   2.00f, 0.15f, 0.000f, 200.0f);
 }
 
@@ -114,6 +130,8 @@ void RateController_Reset(void)
     rate_controller.roll_output = 0.0f;
     rate_controller.pitch_output = 0.0f;
     rate_controller.yaw_output = 0.0f;
+
+    s_roll_pitch_rate_ff_enabled = 0U;
 }
 
 void RateController_Update(float roll_rate_target,
@@ -128,6 +146,27 @@ void RateController_Update(float roll_rate_target,
     PID_SetTarget(&rate_controller.pitch, pitch_rate_target);
     PID_SetTarget(&rate_controller.yaw, yaw_rate_target);
 
+    /*
+     * Rate Feedforward根据目标角速度直接产生少量即使控制量，
+     * 避免旧Rate Integral抵消新产生的Position Hold纠偏指令。
+     * Feedforward只辅助建立响应，Rate PID仍负责闭环误差修正。
+     */
+    if(s_roll_pitch_rate_ff_enabled != 0U)
+    {
+        rate_controller.roll.ff = RateController_Limit(
+            roll_rate_target * ROLL_RATE_FF_GAIN,
+            RATE_FF_LIMIT);
+
+        rate_controller.pitch.ff = RateController_Limit(
+            pitch_rate_target * PITCH_RATE_FF_GAIN,
+            RATE_FF_LIMIT);
+    }
+    else
+    {
+        rate_controller.roll.ff = 0.0f;
+        rate_controller.pitch.ff = 0.0f;
+    }
+
     rate_controller.roll_output = PID_Update(&rate_controller.roll, roll_rate, dt);
     rate_controller.pitch_output = PID_Update(&rate_controller.pitch, pitch_rate, dt);
 
@@ -139,6 +178,11 @@ void RateController_Update(float roll_rate_target,
         yaw_rate,
         dt,
         yaw_integral_growth_scale);
+}
+
+void RateController_SetRollPitchFeedForwardEnabled(uint8_t enabled)
+{
+    s_roll_pitch_rate_ff_enabled = (enabled != 0U) ? 1U : 0U;
 }
 
 /*================================ 航向锁定 ===================================*/

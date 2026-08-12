@@ -92,6 +92,12 @@ void RateController_Init(void);
 void RateController_Reset(void);
 
 /**
+ * @brief   控制Roll/Pitch Rate Feedforward是否参与输出。
+ * @param   enabled     0=关闭；非0=启用
+ */
+void RateController_SetRollPitchFeedForwardEnabled(uint8_t enabled);
+
+/**
  * @brief   更新角速度控制器（内环），计算混空气输入量。
  *
  * 包含常规的 Roll/Pitch 闭环，以及带有动态积分缩放的 Yaw 闭环。
@@ -115,7 +121,7 @@ void RateController_Update(float roll_rate_target,
 
 /**
  * @brief Yaw Heading Hold外环。
- * 
+ *
  * @param[in,out]   pid_yaw   Yaw外环PID示例。
  * @param[in]       yaw_target_deg  期望航向角(deg)。
  * @param[in]       yaw_meas_deg    当前测量航向角(deg)。
