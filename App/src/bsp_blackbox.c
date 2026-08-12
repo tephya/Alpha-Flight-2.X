@@ -51,6 +51,17 @@ typedef __packed struct
     BB_ControlData_t data;
 } BB_ControlRec_t;
 
+typedef __packed struct
+{
+    uint8_t magic;
+    uint8_t type;
+    BB_NavigationData_t data;
+} BB_NavigationRec_t;
+
+typedef char BB_NavigationRecSizeMustBe76[
+    (sizeof(BB_NavigationRec_t) == 76U) ? 1 : -1
+];
+
 typedef char BB_ControlRecV4SizeMustBe90[
     (sizeof(BB_ControlRec_t) == 90U) ? 1 : -1
 ];
@@ -268,6 +279,19 @@ int8_t BB_LogControl(const BB_ControlData_t *data)
 
     rec.magic = BB_FRAME_MAGIC;
     rec.type = BB_REC_CONTROL_V4;
+    rec.data = *data;
+
+    return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));
+}
+
+int8_t BB_LogNavigation(const BB_NavigationData_t *data)
+{
+    if(data == NULL)
+        return -1;
+
+    BB_NavigationRec_t rec;
+    rec.magic = BB_FRAME_MAGIC;
+    rec.type = BB_REC_NAVIGATION_V5;
     rec.data = *data;
 
     return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));

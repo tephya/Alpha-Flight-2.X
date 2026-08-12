@@ -1,5 +1,6 @@
 #include "bsp_gps.h"
 #include "usart.h"
+#include "cmsis_os2.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -8,24 +9,76 @@
 #define NMEA_MAX_LEN 96 // NMEA spec max 82 bytes, 留余量
 
 #define GPS_HOME_MIN_SATELLITES 4       // 起飞点记录成功所需卫星最小数量
+#define GPS_RMC_UTC_MAX_LEN 16U
+
+#define GPS_RUNTIME_BAUDRATE 57600U
 
 #pragma arm section zidata = "DMA_SAFE_SRAM"
 static uint8_t gps_dma_buf[GPS_DMA_BUF_SIZE];  // DMA直接写入区
 #pragma arm section zidata
 static uint8_t gps_proc_buf[GPS_DMA_BUF_SIZE];  // Task读取的快照区，双缓冲
-static volatile uint16_t gps_proc_len = 0;
-static volatile uint8_t gps_data_ready = 0;     // 1=就绪，0=等待数据传输
+static uint8_t gps_parse_buf[GPS_DMA_BUF_SIZE];
+static volatile uint16_t gps_proc_len = 0U;
+static volatile uint8_t gps_data_ready = 0U;     // 1=就绪，0=等待数据传输
+
+static char s_nmea_line[NMEA_MAX_LEN];
+static uint16_t s_nmea_line_len;
+static uint8_t s_nmea_collecting;
+static char s_last_rmc_utc[GPS_RMC_UTC_MAX_LEN];
 
 static GPS_Data_t gps_data;
 static GPS_Home_t gps_home;
+
+static const uint8_t s_gps_set_baud_57600[] = "$PCAS01,4*18\r\n";
+static const uint8_t s_gps_set_rate_5hz[] = "$PCAS02,200*1D\r\n";
+
+static bool GPS_ConfigureRuntime(void)
+{
+    if(HAL_UART_Transmit(&huart4,
+                        (uint8_t *)s_gps_set_baud_57600,
+                        sizeof(s_gps_set_baud_57600) - 1U,
+                        100U) != HAL_OK)
+    {
+        return false;
+    }
+
+    osDelay(100U);
+
+    huart4.Init.BaudRate = GPS_RUNTIME_BAUDRATE;
+    if(HAL_UART_Init(&huart4) != HAL_OK)
+    {
+        return false;
+    }
+
+    __HAL_UART_CLEAR_OREFLAG(&huart4);
+
+    if(HAL_UART_Transmit(&huart4,
+                        (uint8_t *)s_gps_set_rate_5hz,
+                        sizeof(s_gps_set_rate_5hz) - 1U,
+                        100U) != HAL_OK)
+    {
+        return false;
+    }
+
+    osDelay(100U);
+    return true;
+}
 
 /**
  * @brief   挂起DMA传输通道
  */
 void GPS_Init(void)
 {
-    HAL_UARTEx_ReceiveToIdle_DMA(&huart4, gps_dma_buf, GPS_DMA_BUF_SIZE);
-    __HAL_DMA_DISABLE_IT(huart4.hdmarx, DMA_IT_HT);     // 半传输中断用不上，关掉减少无谓触发
+    osDelay(2000U);
+
+    (void)GPS_ConfigureRuntime();
+
+    __HAL_UART_CLEAR_OREFLAG(&huart4);
+
+    if(HAL_UARTEx_ReceiveToIdle_DMA(&huart4, gps_dma_buf, GPS_DMA_BUF_SIZE) == HAL_OK)
+    {
+        __HAL_DMA_DISABLE_IT(huart4.hdmarx, DMA_IT_HT);     // 半传输中断用不上，关掉减少无谓触发
+    }
 }
 
 /**
@@ -33,13 +86,29 @@ void GPS_Init(void)
  */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
-    if(huart->Instance == UART4){
-        if(Size > 0 && Size <= GPS_DMA_BUF_SIZE){
-            memcpy(gps_proc_buf, gps_dma_buf, Size);        // ISR里只做搬运
-            gps_proc_len = Size;
-            gps_data_ready = 1;
+    if(huart->Instance == UART4)
+    {
+        if(Size > 0 && Size <= GPS_DMA_BUF_SIZE)
+        {
+            const uint16_t used = gps_proc_len;
+            const uint16_t free_size = GPS_DMA_BUF_SIZE - used;
+            const uint16_t copy_size =
+                (Size < free_size) ? Size : free_size;
+            
+            if(copy_size > 0U)
+            {
+                memcpy(&gps_proc_buf[used], gps_dma_buf, copy_size); // ISR里只做搬运
+                gps_proc_len = used + copy_size;
+                gps_data_ready = 1U;
+            }    
+
         }
-        HAL_UARTEx_ReceiveToIdle_DMA(&huart4, gps_dma_buf, GPS_DMA_BUF_SIZE);   // 重新挂起下一包
+        // 重新挂起下一包
+        if (HAL_UARTEx_ReceiveToIdle_DMA(&huart4, gps_dma_buf, GPS_DMA_BUF_SIZE) == HAL_OK)
+        {
+            // 每次重启DMA后都要重新关闭HT中断
+            __HAL_DMA_DISABLE_IT(huart4.hdmarx, DMA_IT_HT);
+        }
     }
 }
 
@@ -132,6 +201,7 @@ static void parse_gga(char **f, int n)
     gps_data.gps_satellites = atoi(f[7]);
     gps_data.gps_hdop = atof(f[8]);
     gps_data.gps_altitude_m = atof(f[9]);
+    gps_data.gga_last_update_ms = HAL_GetTick();
 }
 
 /**
@@ -157,11 +227,34 @@ static void parse_rmc(char **f, int n)
        f[8] 航向（度）
        f[9] 日期 */
 
+    // 不把同一UTC历元的重复RMC当成新速度测量
+    if ((f[1] == NULL || (f[1][0] == '\0')))
+        return;
+
+    if(strncmp(f[1], s_last_rmc_utc, sizeof(s_last_rmc_utc)) == 0)
+        return;
+
+    strncpy(s_last_rmc_utc, f[1], sizeof(s_last_rmc_utc) - 1U);
+    s_last_rmc_utc[sizeof(s_last_rmc_utc) - 1U] = '\0';
+
     gps_data.valid = f[2][0];
     gps_data.gps_lat = nmea_to_fixed(f[3], f[4][0]);
     gps_data.gps_lon = nmea_to_fixed(f[5], f[6][0]);
     gps_data.speed_knots = atof(f[7]);
     gps_data.course = atof(f[8]);
+
+    const uint32_t now = HAL_GetTick();
+    if(gps_data.rmc_sequence != 0U)
+    {
+        const uint32_t period = now - gps_data.rmc_last_update_ms;
+        gps_data.rmc_period_ms =
+            (period > 65535U) ? 65535U : (uint16_t)period;
+    }
+
+    gps_data.rmc_last_update_ms = now;
+    gps_data.rmc_sequence++;
+    if(gps_data.rmc_sequence == 0U)
+        gps_data.rmc_sequence = 1U;
 }
 
 /**
@@ -194,6 +287,38 @@ static int16_t split_fields(char *line, char **fields, int max_fields)
     return count;
 }
 
+static int8_t GPS_HexValue(char ch)
+{
+    if(ch >= '0' && ch <= '9')
+        return (int8_t)(ch - '0');
+    if(ch >= 'A' && ch <= 'F')
+        return (int8_t)(ch - 'A' + 10);
+    if(ch >= 'a' && ch <= 'f')
+        return (int8_t)(ch - 'a' + 10);
+    return -1;
+}
+
+static bool GPS_NmeaChecksumOk(const char *line)
+{
+    if(line == NULL || line[0] != '$')
+        return false;
+
+    const char *star = strchr(line, '*');
+    if(star == NULL || star[1] == '\0' || star[2] == '\0')
+        return false;
+
+    uint8_t checksum = 0U;
+    for (const char *p = line + 1; p < star; p++)
+        checksum ^= (uint8_t)*p;
+
+    const int8_t high = GPS_HexValue(star[1]);
+    const int8_t low = GPS_HexValue(star[2]);
+    if(high < 0 || low < 0)
+        return false;
+
+    return checksum == (uint8_t)(((uint8_t)high << 4) | (uint8_t)low);
+}
+
 /**
  * @brief  对完整的 NMEA 帧进行识别与分发解析
  * @note   内部创建缓冲副本以防止原字符串被切分函数破坏
@@ -204,17 +329,21 @@ static void GPS_Parse(const char *line)
 {
     char buf[NMEA_MAX_LEN];
     char *fields[20];
-    int n;
+
+    if(!GPS_NmeaChecksumOk(line))
+        return;
 
     // 复制一份，因为 split_fields 会修改字符串
-    strncpy(buf, line, NMEA_MAX_LEN - 1);
-    buf[NMEA_MAX_LEN - 1] = '\0';
+    strncpy(buf, line, NMEA_MAX_LEN - 1U);
+    buf[NMEA_MAX_LEN - 1U] = '\0';
 
-    n = split_fields(buf, fields, 20);
+    const int n = split_fields(buf, fields, 20);
+    if(n <= 0 || strlen(fields[0]) < 6U)
+        return;
 
-    if (strncmp(fields[0], "$GNGGA", 6) == 0)
+    if (strcmp(&fields[0][3], "GGA") == 0)
         parse_gga(fields, n);
-    else if (strncmp(fields[0], "$GNRMC", 6) == 0)
+    else if (strcmp(&fields[0][3], "RMC") == 0)
         parse_rmc(fields, n);
 }
 
@@ -227,22 +356,57 @@ void GPS_Poll(void)
     if(!gps_data_ready)
         return;
 
-    uint16_t len = gps_proc_len;
-    gps_data_ready = 0;         // 先清标志再处理，避免处理器件被新数据覆盖
+    /* 生成稳定快照，防止UART ISR在Task解析gps_proc_buf期间覆盖它。
+     * 临界区只复制最多256B，不再关中断状态下做字符串解析。 */
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
 
-    // buf里可能挤着好几条NMEA语句，按'$'...'\n'循环切出来逐条丢给GPS解析函数
-    char *p = (char *)gps_proc_buf;
-    char *end = p + len;
-    while(p < end){
-        char *start = memchr(p, '$', end - p);
-        if(!start)
-            break;
-        char *nl = memchr(start, '\n', end - start);
-        if(!nl)
-            break;              // 不完整的尾巴，丢弃
-        *nl = '\0';
-        GPS_Parse(start);
-        p = nl + 1;
+    const uint16_t len = gps_proc_len;
+    memcpy(gps_parse_buf, gps_proc_buf, len);
+
+    gps_proc_len = 0U;
+    gps_data_ready = 0U;
+
+    if(primask == 0U)
+        __enable_irq();
+
+    for (uint16_t i = 0U; i < len; i++)
+    {
+        const char ch = (char)gps_parse_buf[i];
+
+        if(ch == '$')
+        {
+            s_nmea_collecting = 1U;
+            s_nmea_line_len = 0U;
+            s_nmea_line[s_nmea_line_len++] = ch;
+            continue;
+        }
+
+        if(!s_nmea_collecting)
+            continue;
+
+        if(ch == '\n')
+        {
+            s_nmea_line[s_nmea_line_len] = '\0';
+            GPS_Parse(s_nmea_line);
+            s_nmea_collecting = 0U;
+            s_nmea_line_len = 0U;
+            continue;
+        }
+
+        if(ch == '\r')
+            continue;
+
+        if(s_nmea_line_len < (NMEA_MAX_LEN) - 1U)
+        {
+            s_nmea_line[s_nmea_line_len++] = ch;
+        }
+        else
+        {
+            // 超长或损坏直接丢弃，等待下一个'$'重新同步
+            s_nmea_collecting = 0U;
+            s_nmea_line_len = 0U;
+        }
     }
 }
 

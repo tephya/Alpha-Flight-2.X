@@ -18,6 +18,13 @@ typedef struct
 
     float speed_knots;     // 地速，节（RMC）
     float course;          // 航向，度（RMC）
+
+    /* 新鲜度和更新频率不能由Task_Nav的20ms发布周期推断，
+     * 必须在真正解析到GGA/RMC时记录 */
+    uint32_t gga_last_update_ms;
+    uint32_t rmc_last_update_ms;
+    uint32_t rmc_sequence;
+    uint16_t rmc_period_ms;
 } GPS_Data_t;
 
 typedef struct

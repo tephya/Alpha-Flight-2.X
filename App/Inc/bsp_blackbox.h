@@ -22,6 +22,11 @@ typedef enum
     BB_REC_CONTROL_V3 = 0x08,   // 融合Yaw和Level Trim可观测诊断帧
     BB_REC_MAG_CAL_SAMPLE = 0x09,   // MAG校准数据采样事件
     BB_REC_CONTROL_V4 = 0x0A,       // V4：增加MAG拒绝原因和参考磁场
+    BB_REC_NAVIGATION = 0x0B,       // GPS/IMU水平速度Estimator与Velocity Controller诊断
+    BB_REC_NAVIGATION_V2 = 0x0C,    // 增加GPS位置与Position Controller诊断
+    BB_REC_NAVIGATION_V3 = 0x0D,
+    BB_REC_NAVIGATION_V4 = 0x0E,
+    BB_REC_NAVIGATION_V5 = 0x0F,    // 增加Position Mode阶段状态
 } BB_RecType_t;
 
 typedef __packed struct
@@ -61,6 +66,71 @@ typedef __packed struct
                     // bit3=Level Trim ready，bit4=Mag accepted，bit5=Yaw estimator initialized
 } BB_ControlData_t;
 
+typedef __packed struct
+{
+    uint32_t timestamp_cycle;
+    uint32_t rmc_sequence;
+
+    int16_t gps_velocity_n_cms;     // cm/s
+    int16_t gps_velocity_e_cms;
+    int16_t est_velocity_n_cms;
+    int16_t est_velocity_e_cms;
+
+    int16_t accel_n_cms2;           // cm/s^2
+    int16_t accel_e_cms2;
+    int16_t accel_bias_n_cms2;
+    int16_t accel_bias_e_cms2;
+
+    int16_t velocity_target_n_cms;
+    int16_t velocity_target_e_cms;
+    int16_t nav_roll_target_cdeg;
+    int16_t nav_pitch_target_cdeg;
+    int16_t yaw_cdeg;
+    int16_t controller_i_n_cms2;
+    int16_t controller_i_e_cms2;
+
+    uint16_t gps_age_ms;
+    uint16_t rmc_period_ms;
+    uint16_t gps_hdop_centi;
+    uint8_t gps_satellites;
+
+    /* bit0=GPS velocity valid, bit1=Estimator initialized,
+     * bit2=Estimator healthy, bit3=Velocity Hold requested,
+     * bit4=Velocity Hold active, bit5=最近GPS校正接收
+     * bit6=IMU prediction compiled-in, bit7=GPS control ready */
+    uint8_t flags;
+
+    int16_t position_n_cm;
+    int16_t position_e_cm;
+    int16_t gps_position_n_cm;
+    int16_t gps_position_e_cm;
+    int16_t position_target_n_cm;
+    int16_t position_target_e_cm;
+    int16_t position_error_n_cm;
+    int16_t position_error_e_cm;
+
+    /* bit0: GPS Position control ready
+     * bit1: Position Hold requested
+     * bit2: Position Hold active
+     * bit3: Position Controller initialized
+     * bit4: Position control output enabled
+     * bit5: latest GPS Position correction accepted
+     * bit6: latest GPS Position correction rejected
+     * bit7: latest accepted GPS Position innovation also corrected Velocity */
+    uint8_t position_flags;
+
+    /* 0=Manual，1=Velocity Hold，2=Position Hold */
+    uint8_t horizontal_mode;
+
+    int16_t rmc_velocity_n_cms;
+    int16_t rmc_velocity_e_cms;
+    int16_t gps_position_velocity_n_cms;
+    int16_t gps_position_velocity_e_cms;
+    uint8_t gps_velocity_source;
+    uint8_t position_control_phase;
+} BB_NavigationData_t;
+
+
 int8_t BB_Init(void);
 void BB_BufferInit(void);
 void BB_ControlInit(void);
@@ -70,6 +140,7 @@ void BB_ControlInit(void);
 int8_t BB_LogMotion(uint16_t time_ms, const int16_t angle_cdeg[3],
                     const uint16_t motor[4], const int8_t target_cdeg[3]);
 int8_t BB_LogControl(const BB_ControlData_t *data);
+int8_t BB_LogNavigation(const BB_NavigationData_t *data);
 
 /* 低频事件帧，只在状态跳变时调用 */
 int8_t BB_LogArmChanged(uint16_t time_ms, uint8_t armed);

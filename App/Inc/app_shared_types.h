@@ -27,6 +27,11 @@ typedef __packed struct
     int8_t target_cdeg[3];          // 目标角
 } Blackbox_Frame_t;
 
+typedef enum
+{
+    NAV_GPS_VELOCITY_SOURCE_RMC = 0U,
+    NAV_GPS_VELOCITY_SOURCE_POSITION_WINDOW = 1U,
+} NavGpsVelocitySource_t;
 
 typedef struct
 {
@@ -39,6 +44,27 @@ typedef struct
     float speed_knots;              // 地速，节（RMC）
     float course;                   // 航向，度（RMC）
     uint8_t home_valid;             // 1=返航点已记录，0=未记录/记录失败
+
+    float gps_velocity_n_mps;
+    float gps_velocity_e_mps;
+
+    /* 两种候选观测，供选择逻辑和Blackbox诊断使用。 */
+    float rmc_velocity_n_mps;
+    float rmc_velocity_e_mps;
+    float gps_position_velocity_n_mps;
+    float gps_position_velocity_e_mps;
+
+    uint32_t rmc_sequence;          // 每解析到一条checksum正确的RMC递增
+    uint32_t rmc_last_update_ms;
+    uint16_t rmc_period_ms;
+    uint16_t rmc_age_ms;
+
+    uint8_t rmc_velocity_valid;         // RMC speed/course样本质量有效
+    uint8_t gps_position_velocity_valid;    // Position窗口Velocity有效
+    uint8_t gps_velocity_valid;         // 当前选中观测有效
+    uint8_t gps_velocity_source;
+    uint8_t gps_velocity_control_ready;     // 更新率/年龄满足闭环控制要求
+    uint8_t gps_position_control_ready;     // 经纬度、更新率和水平定位质量满足Position Hold要求
 } NavState_t;
 
 typedef struct
