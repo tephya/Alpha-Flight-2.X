@@ -31,22 +31,6 @@ extern osMessageQueueId_t IndicatorEventQueueHandle;
 #define GPS_POSITION_MIN_SATELLITES 9U
 #define GPS_POSITION_MAX_HDOP 2.0f
 
-#define GPS_POSITION_SOURCE_ENTER_MAX_RMC_MPS 0.25f
-#define GPS_RMC_SOURCE_RETURN_MIN_SPEED_MPS 0.45f
-
-#define GPS_POSITION_FALLBACK_MAX_SPEED_MPS 0.80f
-
-/* 进入低速Position Window需要更严格确认：
- * 返回响应更快的RMC只需连续两个样本。 */
-#define GPS_VELOCITY_POSITION_ENTER_CONFIRM_SAMPLES 3U
-#define GPS_VELOCITY_RMC_RETURN_CONFIRM_SAMPLES 2U
-#define GPS_VELOCITY_SOURCE_DISAGREE_CONFIRM_SAMPLES 6U
-
-#define GPS_VELOCITY_SOURCE_SOFT_DISAGREEMENT_MPS 1.20f
-#define GPS_VELOCITY_SOURCE_HARD_DISAGREEMENT_MPS 2.50f
-
-#define GPS_VELOCITY_OUTPUT_MAX_STEP_MPS 0.30f
-
 #define GPS_EARTH_RADIUS_M 6378137.0f
 #define GPS_DEG_E7_TO_RAD 1.745329252e-9f
 
@@ -71,15 +55,6 @@ static uint32_t s_gps_position_last_sequence;
 static float s_gps_position_velocity_n_mps;
 static float s_gps_position_velocity_e_mps;
 static uint8_t s_gps_position_velocity_valid;
-static uint8_t s_gps_velocity_source;
-
-static uint8_t s_gps_velocity_pending_source;
-static uint8_t s_gps_velocity_pending_count;
-static uint32_t s_gps_velocity_selection_last_sequence;
-
-static float s_gps_velocity_output_n_mps;
-static float s_gps_velocity_output_e_mps;
-static uint8_t s_gps_velocity_output_valid;
 
 static void Nav_ResetGpsPositionVelocityHistory(void)
 {
@@ -89,218 +64,9 @@ static void Nav_ResetGpsPositionVelocityHistory(void)
     s_gps_position_velocity_valid = 0U;
 }
 
-static float Nav_VectorMagnitude(float x, float y)
-{
-    return sqrtf(x * x + y * y);
-}
-
-static void Nav_ResetGpsVelocityPendingSwitch(void)
-{
-    s_gps_velocity_pending_source = s_gps_velocity_source;
-    s_gps_velocity_pending_count = 0U;
-}
-
-static void Nav_CommitGpsVelocitySource(uint8_t source)
-{
-    s_gps_velocity_source = source;
-    Nav_ResetGpsVelocityPendingSwitch();
-}
-
-static bool Nav_GpsVelocitySourceValid(const NavState_t *nav, uint8_t source)
-{
-    if(source == NAV_GPS_VELOCITY_SOURCE_POSITION_WINDOW)
-        return nav->gps_position_velocity_valid != 0U;
-
-    return nav->rmc_velocity_valid != 0U;
-}
-
-static void Nav_GetGpsVelocitySourceValue(const NavState_t *nav,
-                                            uint8_t source,
-                                            float *velocity_n_mps,
-                                            float *velocity_e_mps)
-{
-    if(source == NAV_GPS_VELOCITY_SOURCE_POSITION_WINDOW)
-    {
-        *velocity_n_mps = nav->gps_position_velocity_n_mps;
-        *velocity_e_mps = nav->gps_position_velocity_e_mps;
-        return;
-    }
-
-    *velocity_n_mps = nav->rmc_velocity_n_mps;
-    *velocity_e_mps = nav->rmc_velocity_e_mps;
-}
-
-static void Nav_UpdateGpsVelocitySource(NavState_t *nav,
-                                        float rmc_speed_mps,
-                                        float position_velocity_speed_mps,
-                                        bool new_rmc_sample)
-{
-    const bool rmc_valid = nav->rmc_velocity_valid != 0U;
-    const bool position_valid = nav->gps_position_velocity_valid != 0U;
-    const bool position_fallback_available =
-        position_valid &&
-        position_velocity_speed_mps <= GPS_POSITION_FALLBACK_MAX_SPEED_MPS;
-    const bool current_source_valid = Nav_GpsVelocitySourceValid(nav, s_gps_velocity_source);
-
-    if(!current_source_valid)
-    {
-        if(s_gps_velocity_source == NAV_GPS_VELOCITY_SOURCE_RMC)
-        {
-            if(position_valid)
-                Nav_CommitGpsVelocitySource(
-                    NAV_GPS_VELOCITY_SOURCE_POSITION_WINDOW);
-        }
-        else if(rmc_valid)
-        {
-            Nav_CommitGpsVelocitySource(
-                NAV_GPS_VELOCITY_SOURCE_RMC);
-        }
-
-        return;
-    }
-
-    uint8_t desired_source = s_gps_velocity_source;
-
-    if(s_gps_velocity_source == NAV_GPS_VELOCITY_SOURCE_RMC)
-    {
-        if(position_fallback_available &&
-            rmc_valid &&
-            rmc_speed_mps < GPS_POSITION_SOURCE_ENTER_MAX_RMC_MPS)
-        {
-            desired_source = NAV_GPS_VELOCITY_SOURCE_POSITION_WINDOW;
-        }
-    }
-    else
-    {
-        if(rmc_valid &&
-            (rmc_speed_mps > GPS_RMC_SOURCE_RETURN_MIN_SPEED_MPS ||
-            position_velocity_speed_mps > GPS_POSITION_FALLBACK_MAX_SPEED_MPS))
-        {
-            desired_source = NAV_GPS_VELOCITY_SOURCE_RMC;
-        }
-    }
-
-    if(desired_source == s_gps_velocity_source)
-    {
-        Nav_ResetGpsVelocityPendingSwitch();
-        return;
-    }
-
-    if(!new_rmc_sample)
-        return;
-
-    uint8_t required_samples = 
-        (desired_source == NAV_GPS_VELOCITY_SOURCE_RMC) ?
-        GPS_VELOCITY_RMC_RETURN_CONFIRM_SAMPLES :
-        GPS_VELOCITY_POSITION_ENTER_CONFIRM_SAMPLES;
-
-    if(rmc_valid && position_valid)
-    {
-        const float disagreement_n_mps =
-            nav->rmc_velocity_n_mps -
-            nav->gps_position_velocity_n_mps;
-        const float disagreement_e_mps =
-            nav->rmc_velocity_e_mps -
-            nav->gps_position_velocity_e_mps;
-        const float disagreement_mps =
-            Nav_VectorMagnitude(disagreement_n_mps,
-                                disagreement_e_mps);
-
-        if(disagreement_mps > GPS_VELOCITY_SOURCE_HARD_DISAGREEMENT_MPS)
-        {
-            Nav_ResetGpsVelocityPendingSwitch();
-            return;
-        }
-
-        if(disagreement_mps > GPS_VELOCITY_SOURCE_SOFT_DISAGREEMENT_MPS)
-        {
-            required_samples = GPS_VELOCITY_SOURCE_DISAGREE_CONFIRM_SAMPLES;
-        }
-    }
-
-    if(s_gps_velocity_pending_source != desired_source)
-    {
-        s_gps_velocity_pending_source = desired_source;
-        s_gps_velocity_pending_count = 1U;
-    }
-    else if(s_gps_velocity_pending_count < required_samples)
-    {
-        s_gps_velocity_pending_count++;
-    }
-
-    if(s_gps_velocity_pending_count >= required_samples)
-        Nav_CommitGpsVelocitySource(desired_source);
-}
-
-static void Nav_UpdateGpsVelocityOutput(NavState_t *nav, bool new_rmc_sample)
-{
-    if(!Nav_GpsVelocitySourceValid(nav, s_gps_velocity_source))
-    {
-        s_gps_velocity_output_n_mps = 0.0f;
-        s_gps_velocity_output_e_mps = 0.0f;
-        s_gps_velocity_output_valid = 0U;
-
-        nav->gps_velocity_n_mps = 0.0f;
-        nav->gps_velocity_e_mps = 0.0f;
-        nav->gps_velocity_valid = 0U;
-        nav->gps_velocity_source = s_gps_velocity_source;
-        return;
-    }
-
-    float target_n_mps;
-    float target_e_mps;
-
-    Nav_GetGpsVelocitySourceValue(nav, s_gps_velocity_source, &target_n_mps, &target_e_mps);
-
-    if(s_gps_velocity_output_valid == 0U)
-    {
-        s_gps_velocity_output_n_mps = target_n_mps;
-        s_gps_velocity_output_e_mps = target_e_mps;
-        s_gps_velocity_output_valid = 1U;
-    }
-    else if(new_rmc_sample)
-    {
-        const float delta_n_mps =
-            target_n_mps - s_gps_velocity_output_n_mps;
-        const float delta_e_mps =
-            target_e_mps - s_gps_velocity_output_e_mps;
-        const float delta_mps =
-            Nav_VectorMagnitude(delta_n_mps, delta_e_mps);
-
-        const float max_step_mps = GPS_VELOCITY_OUTPUT_MAX_STEP_MPS;
-
-        if(delta_mps > max_step_mps && delta_mps > 0.0001f)
-        {
-            const float scale = max_step_mps / delta_mps;
-            s_gps_velocity_output_n_mps += delta_n_mps * scale;
-            s_gps_velocity_output_e_mps += delta_e_mps * scale;
-        }
-        else
-        {
-            s_gps_velocity_output_n_mps = target_n_mps;
-            s_gps_velocity_output_e_mps = target_e_mps;
-        }
-    }
-
-    nav->gps_velocity_n_mps = s_gps_velocity_output_n_mps;
-    nav->gps_velocity_e_mps = s_gps_velocity_output_e_mps;
-    nav->gps_velocity_valid = s_gps_velocity_output_valid;
-    nav->gps_velocity_source = s_gps_velocity_source;
-}
-
 static void Nav_InitGpsPositionVelocity(void)
 {
     s_gps_position_last_sequence = 0U;
-
-    s_gps_velocity_source = NAV_GPS_VELOCITY_SOURCE_RMC;
-    s_gps_velocity_pending_source = NAV_GPS_VELOCITY_SOURCE_RMC;
-    s_gps_velocity_pending_count = 0U;
-    s_gps_velocity_selection_last_sequence = 0U;
-
-    s_gps_velocity_output_n_mps = 0.0f;
-    s_gps_velocity_output_e_mps = 0.0f;
-    s_gps_velocity_output_valid = 0U;
-
     Nav_ResetGpsPositionVelocityHistory();
 }
 
@@ -502,27 +268,16 @@ static void Nav_BuildNavState(NavState_t *out)
     out->gps_position_velocity_valid = (s_gps_position_velocity_valid != 0U) &&
                                        (out->gps_position_control_ready != 0U);
 
-    const float position_velocity_speed_mps = sqrtf(
-        out->gps_position_velocity_n_mps *
-            out->gps_position_velocity_n_mps +
-        out->gps_position_velocity_e_mps *
-            out->gps_position_velocity_e_mps);
-
-    const bool new_velocity_selection_sample =
-        (gps.rmc_sequence != 0U) &&
-        (gps.rmc_sequence != s_gps_velocity_selection_last_sequence);
-    
-    if(new_velocity_selection_sample)
-    {
-        s_gps_velocity_selection_last_sequence = gps.rmc_sequence;
-    }
-
-    Nav_UpdateGpsVelocitySource(out,
-                                rmc_speed_mps,
-                                position_velocity_speed_mps,
-                                new_velocity_selection_sample);
-
-    Nav_UpdateGpsVelocityOutput(out, new_velocity_selection_sample);
+    /*
+     * 控制观测固定使用RMC ground speed/course。
+     * POSITION_WINDOW与RMC来自同一颗GPS，并不是独立传感器；在二者之间
+     * 切换会把估计方法差异变成真实Velocity阶跃。窗口Velocity继续记录，
+     * 但不再进入Horizontal Estimator。
+     */
+    out->gps_velocity_n_mps = out->rmc_velocity_n_mps;
+    out->gps_velocity_e_mps = out->rmc_velocity_e_mps;
+    out->gps_velocity_valid = out->rmc_velocity_valid;
+    out->gps_velocity_source = NAV_GPS_VELOCITY_SOURCE_RMC;
 
     out->gps_velocity_control_ready =
         (out->gps_velocity_valid != 0U) &&

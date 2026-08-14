@@ -16,6 +16,32 @@
 #define NAV_ACCEL_BIAS_LIMIT_MPS2 1.5f      // 加速度计零偏估值限幅(m/s^2)
 #define NAV_ACCEL_BIAS_TIME_CONSTANT_S 5.0f     // 零偏学习的时间常数(s)
 
+/* 低于该速度时，RMC course不具备稳定方向意义。
+ * 样本仍用于GPS health，但不直接修正二维Velocity。 */
+#define NAV_RMC_VECTOR_MIN_SPEED_MPS 0.25f
+
+/* Estimator内部GPS Position alpha-beta校正。 */
+#define NAV_POSITION_ALPHA_GAIN 0.20f
+#define NAV_POSITION_BETA_LOW_SPEED_GAIN 0.06f
+#define NAV_POSITION_BETA_RMC_AIDED_GAIN 0.02f
+#define NAV_POSITION_INNOVATION_LIMIT_M 5.0f
+#define NAV_POSITION_SAMPLE_DT_MIN_S 0.05f
+#define NAV_POSITION_SAMPLE_DT_MAX_S 0.60f
+#define NAV_POSITION_SAMPLE_ELAPSED_LIMIT_S 2.0f
+#define NAV_POSITION_VELOCITY_CORRECTION_LIMIT_MPS 0.20f
+
+/*
+ * 飞行中Accel bias观测器参数。
+ * 
+ * GPS速度innovation可用于辨识IMU积分产生的长期速度偏差。
+ * 增益必须较小，防止把风扰、真实机动或GPS短时噪声学习成传感器bias。
+ */
+#define NAV_ACCEL_BIAS_GPS_CORRECTION_GAIN 0.005f
+#define NAV_ACCEL_BIAS_GPS_INNOVATION_LIMIT_MPS 0.30f
+#define NAV_ACCEL_BIAS_GPS_DT_MIN_S 0.10f
+#define NAV_ACCEL_BIAS_GPS_DT_MAX_S 0.40f
+#define NAV_ACCEL_BIAS_GPS_STEP_LIMIT_MPS2 0.01f
+
 /* 水平状态估计器(GPS融合)相关参数 */
 #define NAV_GPS_CORRECTION_GAIN 0.35f           // GPS位置/速度修正增益(互补滤波权重)
 #define NAV_GPS_INNOVATION_LIMIT_MPS 5.0f       // GPS信息(测量值与估计值偏差)限度，超限则拒绝该次修正
@@ -24,12 +50,15 @@
 #define NAV_ESTIMATED_SPEED_LIMIT_MPS 20.0f     // 估计器输出的绝对速度限速(m/s)
 
 /* 速度控制器(PI控制)相关参数 */
-#define VELOCITY_KP 1.20f
+#define VELOCITY_KP 1.40f
 #define VELOCITY_KI 0.50f
+#define VELOCITY_KD 0.20f
+
 #define VELOCITY_INEGRAL_ACCEL_LIMIT_MPS2 0.80f     // 积分项加速度限幅(m/s^2)，防止积分饱和
 #define VELOCITY_ACCEL_LIMIT_MPS2 2.00f             // 总目标加速度输出限幅
 #define VELOCITY_ANGLE_LIMIT_DEG 12.0f              // 输出姿态角(Roll/Pitch)限幅(度)
-#define VELOCITY_ANGLE_SLEW_DPS 40.0f               // 目标姿态角的最大变化率限制(度/秒)
+
+#define VELOCITY_ARW_GAIN (2.0f / VELOCITY_KP)
 
 /* 位置控制器相关参数 */
 #define NAV_EARTH_RADIUS_M 6378137.0f               // WGS84地球赤道半径基准，单位：米
@@ -46,36 +75,12 @@
 #define POSITION_BRAKE_CAPTURE_TIME_S 0.50f
 #define POSITION_BRAKE_MAX_TIME_S 1.50f
 
-/*
- * 位置估计每个控制周期使用Velocity积分推进；
- * 新GPS位置到达时，只吸收20%的GPS位置innovation，
- * 避免约5Hz原始经纬度阶跃直接形成剧烈倾角指令。 
- */
-#define POSITION_GPS_CORRECTION_GAIN 0.20f
-#define POSITION_GPS_INNOVATION_LIMIT_M 5.0f
-
-/* alpha-beta融合中的beta项：
- * GPS Position innovation除修正Position外，也要小幅修正Velocity，
- * 避免“位置认为仍在远离目标，速度却认为正在返回”。
- * 0.02配合约5Hz GPS只产生温和的Velocity约束，不会直接追踪单帧位置噪声。 */
-#define POSITION_GPS_VELOCITY_CORRECTION_GAIN 0.02f
-
-/* 仅当GPS样本间隔可信时才计算innovation / dt
- * 防止重复样本或超时恢复样本制造Velocity尖峰。 */
-#define POSITION_GPS_SAMPLE_DT_MIN_S 0.05f
-#define POSITION_GPS_SAMPLE_DT_MAX_S 0.60f
-#define POSITION_GPS_SAMPLE_ELAPSED_LIMIT_S 2.0f
-
-/* 单帧GPS Position最多只能把融合Velocity改变0.20m/s
- * 该限幅保护的是位置噪声对速度状态的瞬时感染，
- * 不改变原有的Horizontal Estimator的总速度上限 */
-#define POSITION_GPS_VELOCITY_CORRECTION_LIMIT_MPS 0.20f
-
 /* 全局状态变量 */
 
 HorizontalEstimator_t horizontal_estimator;
 VelocityController_t velocity_controller;
 PositionController_t position_controller;
+
 
 /* =========================================================================
  * 内部辅助数学函数
@@ -116,27 +121,37 @@ static void Navigation_LimitVector(float *x, float *y, float limit)
 }
 
 /**
- * @brief 限制数值的变化率(Slew rate limiter)
- * @param current 当前值
- * @param target 期望目标值
- * @param max_rate_per_s 每秒最大允许变化量
- * @param dt 控制周期(s)
- * @return 经过斜率限制后的下一时刻值
+ * @brief   将机体系水平Accel bias投影到当前导航N/E坐标系。
+ * 
+ * @note    机体系采用Forward/Right，导航系采用North/East：
+ *              N = cos(yaw) * Forward - sin(yaw) * Right
+ *              E = sin(yaw) * Forward + cos(yaw) * Right
  */
-static float Navigation_Slew(float current,
-                             float target,
-                             float max_rate_per_s,
-                             float dt)
+static void HorizontalEstimator_ProjectAccelBiasToNe(float sin_yaw, float cos_yaw)
 {
-    const float max_step = max_rate_per_s * dt;
-    const float error = target - current;
+    horizontal_estimator.accel_bias_n_mps2 =
+        cos_yaw * horizontal_estimator.accel_bias_forward_mps2 -
+        sin_yaw * horizontal_estimator.accel_bias_right_mps2;
 
-    // 如果目标值与当前值的偏差超过了单次步长允许的最大范围，则只走最大补偿
-    if(error > max_step)
-        return current + max_step;
-    if(error < -max_step)
-        return current - max_step;
-    return target;
+    horizontal_estimator.accel_bias_e_mps2 =
+        sin_yaw * horizontal_estimator.accel_bias_forward_mps2 +
+        cos_yaw * horizontal_estimator.accel_bias_right_mps2;
+}
+
+/**
+ * @brief   刷新公开的N/E bias投影和矫正后水平加速度。
+ */
+static void HorizontalEstimator_RefreshAccelOutput(float sin_yaw, float cos_yaw)
+{
+    HorizontalEstimator_ProjectAccelBiasToNe(sin_yaw, cos_yaw);
+
+    horizontal_estimator.accel_n_mps2 =
+        horizontal_estimator.accel_lpf_n_mps2 -
+        horizontal_estimator.accel_bias_n_mps2;
+
+    horizontal_estimator.accel_e_mps2 =
+        horizontal_estimator.accel_lpf_e_mps2 -
+        horizontal_estimator.accel_bias_e_mps2;
 }
 
 /* =========================================================================
@@ -159,6 +174,8 @@ void HorizontalEstimator_Reset()
     horizontal_estimator.accel_e_mps2 = 0.0f;
     horizontal_estimator.accel_lpf_n_mps2 = 0.0f;
     horizontal_estimator.accel_lpf_e_mps2 = 0.0f;
+    horizontal_estimator.accel_bias_forward_mps2 = 0.0f;
+    horizontal_estimator.accel_bias_right_mps2 = 0.0f;
     horizontal_estimator.accel_bias_n_mps2 = 0.0f;
     horizontal_estimator.accel_bias_e_mps2 = 0.0f;
     horizontal_estimator.last_gps_sequence = 0U;
@@ -168,10 +185,14 @@ void HorizontalEstimator_Reset()
     horizontal_estimator.initialized = 0U;
     horizontal_estimator.gps_healthy = 0U;
     horizontal_estimator.last_gps_accepted = 0U;
+    horizontal_estimator.gps_accept_streak = 0U;
+
+    HorizontalEstimator_ResetPosition();
 }
 
 /**
  * @brief 估计器预测步骤(基于高频IMU数据)
+ * 
  * @param ax_g, ay_g, az_g 机体系三轴加速度(G)
  * @param roll_rad, pitch_rad, yaw_rad 当前机体欧拉角姿态(rad)
  * @param dt 积分时间步长(s)
@@ -227,31 +248,34 @@ void HorizontalEstimator_Predict(float ax_g,
     horizontal_estimator.accel_lpf_e_mps2 +=
         alpha * (accel_e_raw - horizontal_estimator.accel_lpf_e_mps2);
 
-    // 动态学习并消除加速度计在水平方向上的恒定零偏(通常由于标定误差或温度漂移引起)
     if(learn_accel_bias)
     {
-        const float bias_alpha = dt / (NAV_ACCEL_BIAS_TIME_CONSTANT_S + dt);
+        const float bias_alpha =
+            dt / (NAV_ACCEL_BIAS_TIME_CONSTANT_S + dt);
 
-        horizontal_estimator.accel_bias_n_mps2 +=
-            bias_alpha * (horizontal_estimator.accel_lpf_n_mps2 -
-                          horizontal_estimator.accel_bias_n_mps2);
+        const float observed_forward_mps2 =
+            cy * horizontal_estimator.accel_lpf_n_mps2 +
+            sy * horizontal_estimator.accel_lpf_e_mps2;
 
-        horizontal_estimator.accel_bias_e_mps2 +=
-            bias_alpha * (horizontal_estimator.accel_lpf_e_mps2 -
-                          horizontal_estimator.accel_bias_e_mps2);
+        const float observed_right_mps2 =
+            -sy * horizontal_estimator.accel_lpf_n_mps2 +
+            cy * horizontal_estimator.accel_lpf_e_mps2;
 
-        // 限制零偏估值的最大范围，防止误将长时间机动识别为零偏
-        horizontal_estimator.accel_bias_n_mps2 = Navigation_Clamp(
-            horizontal_estimator.accel_bias_n_mps2, -NAV_ACCEL_BIAS_LIMIT_MPS2, NAV_ACCEL_BIAS_LIMIT_MPS2);
-        horizontal_estimator.accel_bias_e_mps2 = Navigation_Clamp(
-            horizontal_estimator.accel_bias_e_mps2, -NAV_ACCEL_BIAS_LIMIT_MPS2, NAV_ACCEL_BIAS_LIMIT_MPS2);
+        horizontal_estimator.accel_bias_forward_mps2 +=
+            bias_alpha *
+            (observed_forward_mps2 - horizontal_estimator.accel_bias_forward_mps2);
+
+        horizontal_estimator.accel_bias_right_mps2 +=
+            bias_alpha *
+            (observed_right_mps2 - horizontal_estimator.accel_bias_right_mps2);
+
+        Navigation_LimitVector(
+            &horizontal_estimator.accel_bias_forward_mps2,
+            &horizontal_estimator.accel_bias_right_mps2,
+            NAV_ACCEL_BIAS_LIMIT_MPS2);
     }
 
-    // 得到最终用于速度预测的纯净运动加速度
-    horizontal_estimator.accel_n_mps2 =
-        horizontal_estimator.accel_lpf_n_mps2 - horizontal_estimator.accel_bias_n_mps2;
-    horizontal_estimator.accel_e_mps2 =
-        horizontal_estimator.accel_lpf_e_mps2 - horizontal_estimator.accel_bias_e_mps2;
+    HorizontalEstimator_RefreshAccelOutput(sy, cy);
 
 #if HORIZONTAL_ESTIMATOR_IMU_PREDICTION_ENABLED
     // 若系统已通过GPS初始化，则利用加速度进行航位推算(积分)预测当前速度
@@ -268,6 +292,96 @@ void HorizontalEstimator_Predict(float ax_g,
                                NAV_ESTIMATED_SPEED_LIMIT_MPS);
     }
 #endif
+
+    if(horizontal_estimator.position_initialized)
+    {
+        /* Position与Velocity属于同一Estimator：高频预测必须使用同一份Velocity。 */
+        horizontal_estimator.position_n_m +=
+            horizontal_estimator.velocity_n_mps * dt;
+        horizontal_estimator.position_e_m +=
+            horizontal_estimator.velocity_e_mps * dt;
+
+        horizontal_estimator.position_sample_elapsed_s += dt;
+        if(horizontal_estimator.position_sample_elapsed_s >
+            NAV_POSITION_SAMPLE_ELAPSED_LIMIT_S)
+        {
+            horizontal_estimator.position_sample_elapsed_s =
+                NAV_POSITION_SAMPLE_ELAPSED_LIMIT_S;
+        }
+    }
+}
+
+/**
+ * @brief   使用GPS速度innovation慢速校正飞行中的水平Accel bias。
+ *
+ * @note    Predict使用：
+ *              Velocity += (accel_lpf - accel_bias) * dt
+ *          
+ *          当Estimator速度高于GPS速度时，innovation为负，说明用于积分的
+ *          Accel可能偏正，因此需要增加Accel bias。故bias修正符号为负。
+ * 
+ *          本函数只应在Position Hold的HOLD阶段调用。外部还必须排除打杆、
+ *          BRAKING和速度源切换阶段。
+ */
+static void HorizontalEstimator_CorrectAccelBiasFromGps(float innovation_n_mps, 
+                                                        float innovation_e_mps,
+                                                        float gps_dt_s,
+                                                        float yaw_rad)
+{
+    if(gps_dt_s < NAV_ACCEL_BIAS_GPS_DT_MIN_S ||
+        gps_dt_s > NAV_ACCEL_BIAS_GPS_DT_MAX_S)
+    {
+        return;
+    }
+
+    const float innovation_mps = sqrtf(
+        innovation_n_mps * innovation_n_mps +
+        innovation_e_mps * innovation_e_mps);
+    
+    if(!(innovation_mps >= 0.0f &&
+        innovation_mps <= NAV_ACCEL_BIAS_GPS_INNOVATION_LIMIT_MPS))
+    {
+        return;
+    }
+
+    /*
+     * innovation / dt近似Estimator的长期加速度误差。
+     * 使用很小的增益更新bias，不能直接快速追踪GPS速度噪声。
+     */
+    float bias_delta_n_mps2 =
+        -NAV_ACCEL_BIAS_GPS_CORRECTION_GAIN *
+        innovation_n_mps / gps_dt_s;
+
+    float bias_delta_e_mps2 =
+        -NAV_ACCEL_BIAS_GPS_CORRECTION_GAIN *
+        innovation_e_mps / gps_dt_s;
+
+    /* 限制单个GPS样本造成的bias改变量。 */
+    Navigation_LimitVector(
+        &bias_delta_n_mps2,
+        &bias_delta_e_mps2,
+        NAV_ACCEL_BIAS_GPS_STEP_LIMIT_MPS2);
+
+    const float sy = sinf(yaw_rad);
+    const float cy = cosf(yaw_rad);
+
+    const float bias_delta_forward_mps2 =
+        cy * bias_delta_n_mps2 + sy * bias_delta_e_mps2;
+    const float bias_delta_right_mps2 =
+        -sy * bias_delta_n_mps2 + cy * bias_delta_e_mps2;
+
+    horizontal_estimator.accel_bias_forward_mps2 +=
+        bias_delta_forward_mps2;
+    horizontal_estimator.accel_bias_right_mps2 +=
+        bias_delta_right_mps2;
+
+    Navigation_LimitVector(
+        &horizontal_estimator.accel_bias_forward_mps2,
+        &horizontal_estimator.accel_bias_right_mps2,
+        NAV_ACCEL_BIAS_LIMIT_MPS2);
+
+    /* 本帧立即发布新bias对应的N/E加速度，不等下一次Predict */
+    HorizontalEstimator_RefreshAccelOutput(sy, cy);
 }
 
 /**
@@ -278,7 +392,10 @@ bool HorizontalEstimator_CorrectGps(float gps_velocity_n_mps,
                                     float gps_velocity_e_mps,
                                     uint32_t gps_sequence,
                                     uint32_t gps_tick_ms,
-                                    bool sample_valid)
+                                    float yaw_rad,
+                                    bool sample_valid,
+                                    bool allow_accel_bias_correction,
+                                    bool allow_state_reacquire)
 {
     // 利用序列号检查是否为重复的旧数据
     if(gps_sequence == 0U ||
@@ -290,55 +407,107 @@ bool HorizontalEstimator_CorrectGps(float gps_velocity_n_mps,
     horizontal_estimator.last_gps_sequence = gps_sequence;
     horizontal_estimator.last_gps_accepted = 0U;
 
-    const float gps_speed = sqrtf(gps_velocity_n_mps * gps_velocity_n_mps +
-                                  gps_velocity_e_mps * gps_velocity_e_mps);
+    const float rmc_speed_mps = sqrtf(
+        gps_velocity_n_mps * gps_velocity_n_mps +
+        gps_velocity_e_mps * gps_velocity_e_mps);
     
     /* 检查GPS数据的有效性。
      * 与NaN比较的结果必定为false，因此该范围判断同时拒绝了NaN和Inf等非法浮点数。 */
-    if(!sample_valid || !(gps_speed >= 0.0f && gps_speed <= 30.0f))
+    if(!sample_valid || !(rmc_speed_mps >= 0.0f && rmc_speed_mps <= 30.0f))
     {
         horizontal_estimator.gps_reject_count++;
+        horizontal_estimator.gps_accept_streak = 0U;
         horizontal_estimator.gps_healthy = 0U;
         return false;
     }
 
+    const bool rmc_course_usable =
+        rmc_speed_mps >= NAV_RMC_VECTOR_MIN_SPEED_MPS;
+
+    const float observed_velocity_n_mps =
+        rmc_course_usable ? gps_velocity_n_mps : 0.0f;
+    const float observed_velocity_e_mps =
+        rmc_course_usable ? gps_velocity_e_mps : 0.0f;
+
     const uint32_t gps_ms = gps_tick_ms - horizontal_estimator.last_gps_tick_ms;
 
-    // 检查是否需要重新初始化融合滤波器
-    if(!horizontal_estimator.initialized ||
+    const bool initial_alignment =
+        !horizontal_estimator.initialized ||
         horizontal_estimator.last_gps_tick_ms == 0U ||
-        gps_ms > NAV_GPS_REACQUIRE_GAP_MS)
-    {
-        /* 首帧或长时间失锁后的第一帧直接对齐GPS，避免拿旧速度缓慢追赶。 */
-        horizontal_estimator.velocity_n_mps = gps_velocity_n_mps;
-        horizontal_estimator.velocity_e_mps = gps_velocity_e_mps;
-        horizontal_estimator.initialized = 1U;
-    }
-    else
-    {
-        // 计算新息(Innovation): GPS观测速度与当前预测速度的误差
-        const float innovation_n =
-            gps_velocity_n_mps - horizontal_estimator.velocity_n_mps;
-        const float innovation_e =
-            gps_velocity_e_mps - horizontal_estimator.velocity_e_mps;
-        const float innovation =
-            sqrtf(innovation_n * innovation_n + innovation_e * innovation_e);
+        gps_ms > NAV_GPS_REACQUIRE_GAP_MS;
 
-        // 如果误差过大(可能发生GPS阶跃/多径突变)，则拒绝本次融合
-        if(innovation > NAV_GPS_INNOVATION_LIMIT_MPS)
+    // 检查是否需要重新初始化融合滤波器
+    if(initial_alignment)
+    {
+        if(horizontal_estimator.initialized &&
+            !allow_state_reacquire)
         {
             horizontal_estimator.gps_reject_count++;
+            horizontal_estimator.gps_accept_streak = 0U;
             horizontal_estimator.gps_healthy = 0U;
             return false;
         }
 
-        // 应用修正：基于增益(Gain)按比例修正当前预估速度
-        horizontal_estimator.velocity_n_mps +=
-            NAV_GPS_CORRECTION_GAIN * innovation_n;
-        horizontal_estimator.velocity_e_mps +=
-            NAV_GPS_CORRECTION_GAIN * innovation_e;
+        horizontal_estimator.velocity_n_mps =
+            observed_velocity_n_mps;
+        horizontal_estimator.velocity_e_mps =
+            observed_velocity_e_mps;
+        horizontal_estimator.initialized = 1U;
+        horizontal_estimator.gps_accept_streak = 1U;
+    }
+    else
+    {
+        const float innovation_n_mps =
+            observed_velocity_n_mps -
+            horizontal_estimator.velocity_n_mps;
+        const float innovation_e_mps =
+            observed_velocity_e_mps -
+            horizontal_estimator.velocity_e_mps;
+        const float innovation_mps = sqrtf(
+            innovation_n_mps * innovation_n_mps +
+            innovation_e_mps * innovation_e_mps);
+
+        const bool innovation_valid =
+            innovation_mps >= 0.0f &&
+            innovation_mps <= NAV_GPS_INNOVATION_LIMIT_MPS;
+
+        if(!innovation_valid)
+        {
+            if(!allow_state_reacquire)
+            {
+                horizontal_estimator.gps_reject_count++;
+                horizontal_estimator.gps_accept_streak = 0U;
+                horizontal_estimator.gps_healthy = 0U;
+                return false;
+            }
+
+            horizontal_estimator.velocity_n_mps = observed_velocity_n_mps;
+            horizontal_estimator.velocity_e_mps = observed_velocity_e_mps;
+            horizontal_estimator.gps_accept_streak = 1U;
+        }
+        else
+        {
+            if(allow_accel_bias_correction && rmc_course_usable)
+            {
+                const float gps_dt_s = (float)gps_ms * 0.001f;
+                HorizontalEstimator_CorrectAccelBiasFromGps(
+                    innovation_n_mps,
+                    innovation_e_mps,
+                    gps_dt_s,
+                    yaw_rad);
+            }
+
+            horizontal_estimator.velocity_n_mps +=
+                NAV_GPS_CORRECTION_GAIN * innovation_n_mps;
+            horizontal_estimator.velocity_e_mps +=
+                NAV_GPS_CORRECTION_GAIN * innovation_e_mps;
+
+            if(horizontal_estimator.gps_accept_streak < UINT8_MAX)
+                horizontal_estimator.gps_accept_streak++;
+        }
     }
 
+    /* 低速零值虽然不修改二维Velocity，但仍证明GPS链路及时且样本有效。 */
     horizontal_estimator.last_gps_tick_ms = gps_tick_ms;
     horizontal_estimator.gps_accept_count++;
     horizontal_estimator.gps_healthy = 1U;
@@ -370,6 +539,8 @@ void VelocityController_Init(void)
 {
     velocity_controller.kp = VELOCITY_KP;
     velocity_controller.ki = VELOCITY_KI;
+    velocity_controller.kd = VELOCITY_KD;
+    velocity_controller.arw_gain = VELOCITY_ARW_GAIN;
     VelocityController_Reset();
 }
 
@@ -386,114 +557,149 @@ void VelocityController_Reset(void)
 {
     VelocityController_ResetIntegral();
 
+    velocity_controller.accel_requested_n_mps2 = 0.0f;
+    velocity_controller.accel_requested_e_mps2 = 0.0f;
     velocity_controller.accel_target_n_mps2 = 0.0f;
     velocity_controller.accel_target_e_mps2 = 0.0f;
+    velocity_controller.p_accel_n_mps2 = 0.0f;
+    velocity_controller.p_accel_e_mps2 = 0.0f;
+    velocity_controller.d_accel_n_mps2 = 0.0f;
+    velocity_controller.d_accel_e_mps2 = 0.0f;
     velocity_controller.roll_target_deg = 0.0f;
     velocity_controller.pitch_target_deg = 0.0f;
+    velocity_controller.output_limited = 0U;
+    velocity_controller.integral_enabled = 0U;
 }
 
-/**
- * @brief 
- */
 void VelocityController_Update(float velocity_target_n_mps,
                                float velocity_target_e_mps,
                                float velocity_meas_n_mps,
                                float velocity_meas_e_mps,
+                               float accel_meas_n_mps2,
+                               float accel_meas_e_mps2,
                                float yaw_rad,
+                               bool allow_integral_learning,
                                float dt)
 {
     if(dt < 0.0005f || dt > 0.0050f)
         return;
 
     // 计算速度误差
-    const float error_n = velocity_target_n_mps - velocity_meas_n_mps;
-    const float error_e = velocity_target_e_mps - velocity_meas_e_mps;
+    const float error_n_mps = velocity_target_n_mps - velocity_meas_n_mps;
+    const float error_e_mps = velocity_target_e_mps - velocity_meas_e_mps;
 
-    // 计算暂定输出：P项 + 当前时刻的I项，用于后续的抗积分饱和判定
-    float pre_accel_n =
-        velocity_controller.kp * error_n +
-        velocity_controller.integral_accel_n_mps2;
-    float pre_accel_e =
-        velocity_controller.kp * error_e +
-        velocity_controller.integral_accel_e_mps2;
+    velocity_controller.integral_enabled =
+        allow_integral_learning ? 1U : 0U;
 
-    const float pre_magnitude =
-        sqrtf(pre_accel_n * pre_accel_n + pre_accel_e * pre_accel_e);
+    /*
+     * D-on-measurement：Velocity的导数就是Acceleration。
+     * 使用Estimator已经完成重力分离、bias去除和5Hz LPF的水平Acceleration，
+     * 避免对含GPS阶跃的Velocity状态再做数值微分。
+     */
+    velocity_controller.p_accel_n_mps2 =
+        velocity_controller.kp * error_n_mps;
+    velocity_controller.p_accel_e_mps2 =
+        velocity_controller.kp * error_e_mps;
 
-    /* 抗积分饱和机制(Anti-windup):
-     * integral_dot_error 是当前积分量与当前误差的内积。
-     * 当 Integral_dot_error < 0 时，说明误差符号与积分项符号相反（即误差正试图卸载现有的积分值）。
-     * 策略：未饱和时正常积分；控制量饱和时，只允许反向误差卸载已有Integral，禁止继续朝着饱和方向积累。 */
-    const float integral_dot_error =
-        velocity_controller.integral_accel_n_mps2 * error_n +
-        velocity_controller.integral_accel_e_mps2 * error_e;
+    velocity_controller.d_accel_n_mps2 =
+        -velocity_controller.kd * accel_meas_n_mps2;
+    velocity_controller.d_accel_e_mps2 =
+        -velocity_controller.kd * accel_meas_e_mps2;
 
-    if(pre_magnitude < VELOCITY_ACCEL_LIMIT_MPS2 || integral_dot_error < 0.0f)
+    velocity_controller.accel_requested_n_mps2 =
+        velocity_controller.p_accel_n_mps2 +
+        velocity_controller.integral_accel_n_mps2 +
+        velocity_controller.d_accel_n_mps2;
+    velocity_controller.accel_requested_e_mps2 =
+        velocity_controller.p_accel_e_mps2 +
+        velocity_controller.integral_accel_e_mps2 +
+        velocity_controller.d_accel_e_mps2;
+
+    velocity_controller.accel_target_n_mps2 =
+        velocity_controller.accel_requested_n_mps2;
+    velocity_controller.accel_target_e_mps2 =
+        velocity_controller.accel_requested_e_mps2;
+
+    Navigation_LimitVector(
+        &velocity_controller.accel_target_n_mps2,
+        &velocity_controller.accel_target_e_mps2,
+        VELOCITY_ACCEL_LIMIT_MPS2);
+
+    const float saturation_error_n_mps2 =
+        velocity_controller.accel_target_n_mps2 -
+        velocity_controller.accel_requested_n_mps2;
+    const float saturation_error_e_mps2 =
+        velocity_controller.accel_target_e_mps2 -
+        velocity_controller.accel_requested_e_mps2;
+
+    velocity_controller.output_limited =
+        (fabsf(saturation_error_n_mps2) > 0.0001f ||
+         fabsf(saturation_error_e_mps2) > 0.0001f)
+            ? 1U
+            : 0U;
+
+    /*
+     * Position MOVING/BRAKING中的Velocity error主要由飞手指令、机体响应
+     * 延迟和制动过程造成，不能作为持续风扰写入Integral。
+     *
+     * HOLD时允许error建立静态抗风补偿；Velocity Hold没有Position三阶段，
+     * 其回中目标本身就是速度保持，因此也允许学习。
+     *
+     * Tracking Anti-windup不受该门控影响。即使禁止学习，只要输出饱和，
+     * Integral仍会向限幅后真正可交付的Acceleration回算，避免保存过量命令。
+     * 因此非饱和时I严格保持；只有饱和保护需要时才允许回算改变I。
+     */
+    float integral_error_n_mps = 0.0f;
+    float integral_error_e_mps = 0.0f;
+
+    if(allow_integral_learning)
     {
-        velocity_controller.integral_accel_n_mps2 +=
-            velocity_controller.ki * error_n * dt;
-        velocity_controller.integral_accel_e_mps2 +=
-            velocity_controller.ki * error_e * dt;
-
-        // 独立限制积分项的最大权重，防止长时间小误差导致积分爆表
-        Navigation_LimitVector(
-            &velocity_controller.integral_accel_n_mps2,
-            &velocity_controller.integral_accel_e_mps2,
-            VELOCITY_INEGRAL_ACCEL_LIMIT_MPS2);
+        integral_error_n_mps = error_n_mps;
+        integral_error_e_mps = error_e_mps;
     }
 
-    // 计算最终的 NED 坐标系下的目标加速度
-    velocity_controller.accel_target_n_mps2 =
-        velocity_controller.kp * error_n +
-        velocity_controller.integral_accel_n_mps2;
-    velocity_controller.accel_target_e_mps2 =
-        velocity_controller.kp * error_e +
-        velocity_controller.integral_accel_e_mps2;
+    integral_error_n_mps +=
+        velocity_controller.arw_gain * saturation_error_n_mps2;
+    integral_error_e_mps +=
+        velocity_controller.arw_gain * saturation_error_e_mps2;
 
-    // 限制总体目标加速度
-    Navigation_LimitVector(&velocity_controller.accel_target_n_mps2,
-                           &velocity_controller.accel_target_e_mps2,
-                           VELOCITY_ACCEL_LIMIT_MPS2);
+    velocity_controller.integral_accel_n_mps2 +=
+        velocity_controller.ki * integral_error_n_mps * dt;
+    velocity_controller.integral_accel_e_mps2 +=
+        velocity_controller.ki * integral_error_e_mps * dt;
+
+    Navigation_LimitVector(
+        &velocity_controller.integral_accel_n_mps2,
+        &velocity_controller.integral_accel_e_mps2,
+        VELOCITY_INEGRAL_ACCEL_LIMIT_MPS2);
 
     const float sy = sinf(yaw_rad);
     const float cy = cosf(yaw_rad);
 
-    /* 坐标系转换：利用航向角，将大地N/E坐标系下的目标加速度，旋转到机体坐标系的 前/右 轴上。 */
-    const float accel_forward =
+    const float accel_forward_mps2 =
         cy * velocity_controller.accel_target_n_mps2 +
         sy * velocity_controller.accel_target_e_mps2;
-    const float accel_right =
+    const float accel_right_mps2 =
         -sy * velocity_controller.accel_target_n_mps2 +
         cy * velocity_controller.accel_target_e_mps2;
 
-    /* 物理模型转化：期望加速度 -> 期望欧拉角
-     * 飞机通过倾斜自身，利用升力(抵抗重力的力)的水平分量来产水水平加速度 。
-     * a = g * tan(theta) => theta = atan(a/g)
-     * 注意：机头下沉(Pitch为负)产生向前的加速度，机身右倾(Roll为正)产生向右的加速度。*/
-    float desired_pitch_deg =
-        -atanf(accel_forward / NAV_GRAVITY_MPS2) * NAV_RAD_TO_DEG;
-    float desired_roll_deg =
-        atanf(accel_right / NAV_GRAVITY_MPS2) * NAV_RAD_TO_DEG;
+    /*
+     * 限制的是水平Acceleration矢量，因此转换后不再独立裁剪
+     * Roll/Pitch两轴，避免破坏原Acceleration方向。
+     */
+    velocity_controller.pitch_target_deg =
+        -atanf(accel_forward_mps2 / NAV_GRAVITY_MPS2) * NAV_RAD_TO_DEG;
+    velocity_controller.roll_target_deg =
+        atanf(accel_right_mps2 / NAV_GRAVITY_MPS2) * NAV_RAD_TO_DEG;
 
-    // 限制单轴最终输出的最大倾斜角限制
-    desired_roll_deg = Navigation_Clamp(desired_roll_deg,
-                                        -VELOCITY_ANGLE_LIMIT_DEG,
-                                        VELOCITY_ANGLE_LIMIT_DEG);
-    desired_pitch_deg = Navigation_Clamp(desired_pitch_deg,
-                                        -VELOCITY_ANGLE_LIMIT_DEG,
-                                        VELOCITY_ANGLE_LIMIT_DEG);
-
-    // 平滑输出(Slew rate limiter)，防止指令突变引起机体剧烈震荡
-    velocity_controller.roll_target_deg = Navigation_Slew(
+    velocity_controller.roll_target_deg = Navigation_Clamp(
         velocity_controller.roll_target_deg,
-        desired_roll_deg,
-        VELOCITY_ANGLE_SLEW_DPS,
-        dt);
-    velocity_controller.pitch_target_deg = Navigation_Slew(
+        -VELOCITY_ANGLE_LIMIT_DEG,
+        VELOCITY_ANGLE_LIMIT_DEG);
+    velocity_controller.pitch_target_deg = Navigation_Clamp(
         velocity_controller.pitch_target_deg,
-        desired_pitch_deg,
-        VELOCITY_ANGLE_SLEW_DPS,
-        dt);
+        -VELOCITY_ANGLE_LIMIT_DEG,
+        VELOCITY_ANGLE_LIMIT_DEG);
 }
 
 /**
@@ -502,8 +708,8 @@ void VelocityController_Update(float velocity_target_n_mps,
  * @param longitude_e7 经度坐标(° * 1e7)
  * @return true=坐标符合[-90,90]及[-180,180]规范；false=越界非法数据
  */
-static bool PositionController_CoordinateValid(int32_t latitude_e7,
-                                              int32_t longitude_e7)
+static bool Navigation_CoordinateValid(int32_t latitude_e7,
+                                       int32_t longitude_e7)
 {
     return latitude_e7 >= -900000000 &&
            latitude_e7 <= 900000000 &&
@@ -511,63 +717,194 @@ static bool PositionController_CoordinateValid(int32_t latitude_e7,
            longitude_e7 <= 1800000000;
 }
 
-/**
- * @brief   用GPS Position innovation约束水平Velocity状态。
- * 
- * @param[in,out]   horizontal_state    待修正的水平状态估计器
- * @param[in]   innovation_n_m  GPS北向位置测量 - 预测位置(m)
- * @param[in]   innovation_e_m  GPS东向位置测量 - 预测位置(m)
- * @param[in]   gps_sample_dt_s 前后两条新RMC样本的时间间隔
- * 
- * @note    alpha-beta关系中，Velocity修正量为 beta * position_innovation / dt。
- *          修正量先单帧限幅，再对最终Velocity做原有总速度限幅。
- */
-static void PositionController_CorrectVelocity(HorizontalEstimator_t *horizontal_state,
-                                               float innovation_n_m,
-                                               float innovation_e_m,
-                                               float gps_sample_dt_s)
+void HorizontalEstimator_ResetPosition(void)
 {
-    position_controller.velocity_correction_n_mps = 0.0f;
-    position_controller.velocity_correction_e_mps = 0.0f;
-    position_controller.last_velocity_correction_applied = 0U;
+    horizontal_estimator.position_n_m = 0.0f;
+    horizontal_estimator.position_e_m = 0.0f;
+    horizontal_estimator.gps_position_n_m = 0.0f;
+    horizontal_estimator.gps_position_e_m = 0.0f;
 
-    if(horizontal_state == NULL ||
-        !horizontal_state->initialized ||
-        gps_sample_dt_s < POSITION_GPS_SAMPLE_DT_MIN_S ||
-        gps_sample_dt_s > POSITION_GPS_SAMPLE_DT_MAX_S)
+    horizontal_estimator.position_reference_lat_e7 = 0;
+    horizontal_estimator.position_reference_lon_e7 = 0;
+    horizontal_estimator.meter_per_lat_e7 = 0.0f;
+    horizontal_estimator.meter_per_lon_e7 = 0.0f;
+
+    horizontal_estimator.position_sample_elapsed_s = 0.0f;
+    horizontal_estimator.position_velocity_correction_n_mps = 0.0f;
+    horizontal_estimator.position_velocity_correction_e_mps = 0.0f;
+
+    horizontal_estimator.last_position_sequence = 0U;
+    horizontal_estimator.position_accept_count = 0U;
+    horizontal_estimator.position_reject_count = 0U;
+    horizontal_estimator.position_velocity_correction_count = 0U;
+
+    horizontal_estimator.position_initialized = 0U;
+    horizontal_estimator.last_position_accepted = 0U;
+    horizontal_estimator.last_position_rejected = 0U;
+    horizontal_estimator.last_position_velocity_correction_applied = 0U;
+
+    horizontal_estimator.position_accept_streak = 0U;
+}
+
+bool HorizontalEstimator_SetPositionReference(int32_t latitude_e7,
+                                              int32_t longitude_e7,
+                                              uint32_t gps_sequence)
+{
+    HorizontalEstimator_ResetPosition();
+
+    if(gps_sequence == 0U ||
+        !Navigation_CoordinateValid(latitude_e7, longitude_e7))
     {
-        return;
+        return false;
     }
 
-    float correction_n_mps =
-        POSITION_GPS_VELOCITY_CORRECTION_GAIN * innovation_n_m / gps_sample_dt_s;
-    float correction_e_mps =
-        POSITION_GPS_VELOCITY_CORRECTION_GAIN * innovation_e_m / gps_sample_dt_s;
+    const float reference_lat_rad =
+        (float)latitude_e7 * NAV_DEG_E7_TO_RAD;
+
+    horizontal_estimator.position_reference_lat_e7 = latitude_e7;
+    horizontal_estimator.position_reference_lon_e7 = longitude_e7;
+    horizontal_estimator.meter_per_lat_e7 =
+        NAV_EARTH_RADIUS_M * NAV_DEG_E7_TO_RAD;
+    horizontal_estimator.meter_per_lon_e7 =
+        horizontal_estimator.meter_per_lat_e7 * cosf(reference_lat_rad);
+
+    horizontal_estimator.last_position_sequence = gps_sequence;
+    horizontal_estimator.position_initialized = 1U;
+    return true;
+}
+
+bool HorizontalEstimator_CorrectPosition(int32_t latitude_e7,
+                                         int32_t longitude_e7,
+                                         uint32_t gps_sequence,
+                                         bool sample_valid,
+                                         bool allow_state_reacquire)
+{
+    if(!horizontal_estimator.position_initialized ||
+        gps_sequence == 0U ||
+        gps_sequence == horizontal_estimator.last_position_sequence)
+    {
+        return false;
+    }
+
+    const float gps_sample_dt_s =
+        horizontal_estimator.position_sample_elapsed_s;
+
+    horizontal_estimator.position_sample_elapsed_s = 0.0f;
+    horizontal_estimator.last_position_sequence = gps_sequence;
+    horizontal_estimator.last_position_accepted = 0U;
+    horizontal_estimator.last_position_rejected = 0U;
+    horizontal_estimator.last_position_velocity_correction_applied = 0U;
+    horizontal_estimator.position_velocity_correction_n_mps = 0.0f;
+    horizontal_estimator.position_velocity_correction_e_mps = 0.0f;
+
+    if(!sample_valid ||
+        !Navigation_CoordinateValid(latitude_e7, longitude_e7) ||
+        gps_sample_dt_s < NAV_POSITION_SAMPLE_DT_MIN_S ||
+        gps_sample_dt_s > NAV_POSITION_SAMPLE_DT_MAX_S)
+    {
+        horizontal_estimator.position_reject_count++;
+        horizontal_estimator.position_accept_streak = 0U;
+        horizontal_estimator.last_position_rejected = 1U;
+        return false;
+    }
+
+    const int64_t delta_lat_e7 =
+        (int64_t)latitude_e7 -
+        horizontal_estimator.position_reference_lat_e7;
+    const int64_t delta_lon_e7 =
+        (int64_t)longitude_e7 -
+        horizontal_estimator.position_reference_lon_e7;
+
+    horizontal_estimator.gps_position_n_m =
+        (float)delta_lat_e7 * horizontal_estimator.meter_per_lat_e7;
+    horizontal_estimator.gps_position_e_m =
+        (float)delta_lon_e7 * horizontal_estimator.meter_per_lon_e7;
+
+    const float innovation_n_m =
+        horizontal_estimator.gps_position_n_m -
+        horizontal_estimator.position_n_m;
+    const float innovation_e_m =
+        horizontal_estimator.gps_position_e_m -
+        horizontal_estimator.position_e_m;
+    const float innovation_m = sqrtf(
+        innovation_n_m * innovation_n_m +
+        innovation_e_m * innovation_e_m);
+
+    const bool innovation_valid =
+        innovation_m >= 0.0f &&
+        innovation_m <= NAV_POSITION_INNOVATION_LIMIT_M;
+
+    if(!innovation_valid)
+    {
+        if(!allow_state_reacquire)
+        {
+            horizontal_estimator.position_reject_count++;
+            horizontal_estimator.position_accept_streak = 0U;
+            horizontal_estimator.last_position_rejected = 1U;
+            return false;
+        }
+
+        horizontal_estimator.position_n_m =
+            horizontal_estimator.gps_position_n_m;
+        horizontal_estimator.position_e_m =
+            horizontal_estimator.gps_position_e_m;
+        horizontal_estimator.position_accept_count++;
+        horizontal_estimator.position_accept_streak = 1U;
+        horizontal_estimator.last_position_accepted = 1U;
+        return true;
+    }
+
+    /* alpha：低频GPS Position约束连续Position状态。 */
+    horizontal_estimator.position_n_m +=
+        NAV_POSITION_ALPHA_GAIN * innovation_n_m;
+    horizontal_estimator.position_e_m +=
+        NAV_POSITION_ALPHA_GAIN * innovation_e_m;
+
+    /* beta：从Position innovation提取Velocity信息。
+     * RMC本帧已直接修正Velocity时，两项观测来自同一GPS，不能再使用完整
+     * 低速beta重复加权；此时退回温和的0.02。RMC没有可信方向时使用0.06，
+     * 专门填补其低速盲区。
+     */
+    const float position_beta_gain = 
+        horizontal_estimator.last_gps_accepted ?
+        NAV_POSITION_BETA_RMC_AIDED_GAIN :
+        NAV_POSITION_BETA_LOW_SPEED_GAIN;
+
+    float velocity_correction_n_mps =
+        position_beta_gain * innovation_n_m / gps_sample_dt_s;
+    float velocity_correction_e_mps =
+        position_beta_gain * innovation_e_m / gps_sample_dt_s;
 
     Navigation_LimitVector(
-        &correction_n_mps,
-        &correction_e_mps,
-        POSITION_GPS_VELOCITY_CORRECTION_LIMIT_MPS);
+        &velocity_correction_n_mps,
+        &velocity_correction_e_mps,
+        NAV_POSITION_VELOCITY_CORRECTION_LIMIT_MPS);
 
-    const float velocity_before_n_mps = horizontal_state->velocity_n_mps;
-    const float velocity_before_e_mps = horizontal_state->velocity_e_mps;
+    const float velocity_before_n_mps =
+        horizontal_estimator.velocity_n_mps;
+    const float velocity_before_e_mps =
+        horizontal_estimator.velocity_e_mps;
 
-    horizontal_state->velocity_n_mps += correction_n_mps;
-    horizontal_state->velocity_e_mps += correction_e_mps;
+    horizontal_estimator.velocity_n_mps += velocity_correction_n_mps;
+    horizontal_estimator.velocity_e_mps += velocity_correction_e_mps;
 
     Navigation_LimitVector(
-        &horizontal_state->velocity_n_mps,
-        &horizontal_state->velocity_e_mps,
+        &horizontal_estimator.velocity_n_mps,
+        &horizontal_estimator.velocity_e_mps,
         NAV_ESTIMATED_SPEED_LIMIT_MPS);
-    
-    /* 记录限幅后真正进入Estimator的修正量，
-     * 便于后续黑匣子诊断。 */
-    position_controller.velocity_correction_n_mps = 
-        horizontal_state->velocity_n_mps - velocity_before_n_mps;
-    position_controller.velocity_correction_e_mps =
-        horizontal_state->velocity_e_mps - velocity_before_e_mps;
-    position_controller.velocity_correction_count++;
-    position_controller.last_velocity_correction_applied = 1U;
+
+    horizontal_estimator.position_velocity_correction_n_mps =
+        horizontal_estimator.velocity_n_mps - velocity_before_n_mps;
+    horizontal_estimator.position_velocity_correction_e_mps =
+        horizontal_estimator.velocity_e_mps - velocity_before_e_mps;
+
+    horizontal_estimator.position_accept_count++;
+    horizontal_estimator.position_velocity_correction_count++;
+    if(horizontal_estimator.position_accept_streak < UINT8_MAX)
+        horizontal_estimator.position_accept_streak++;
+    horizontal_estimator.last_position_accepted = 1U;
+    horizontal_estimator.last_position_velocity_correction_applied = 1U;
+    return true;
 }
 
 /**
@@ -586,16 +923,6 @@ void PositionController_Reset(void)
 {
     position_controller.kp = POSITION_KP;
 
-    position_controller.reference_lat_e7 = 0;
-    position_controller.reference_lon_e7 = 0;
-    position_controller.meter_per_lat_e7 = 0.0f;
-    position_controller.meter_per_lon_e7 = 0.0f;
-
-    position_controller.position_n_m = 0.0f;
-    position_controller.position_e_m = 0.0f;
-    position_controller.gps_position_n_m = 0.0f;
-    position_controller.gps_position_e_m = 0.0f;
-
     position_controller.target_n_m = 0.0f;
     position_controller.target_e_m = 0.0f;
     position_controller.error_n_m = 0.0f;
@@ -608,19 +935,7 @@ void PositionController_Reset(void)
     position_controller.brake_elapsed_time_s = 0.0f;
     position_controller.phase = POSITION_CONTROL_PHASE_INACTIVE;
 
-    position_controller.gps_sample_elapsed_s = 0.0f;
-    position_controller.velocity_correction_n_mps = 0.0f;
-    position_controller.velocity_correction_e_mps = 0.0f;
-
-    position_controller.last_gps_sequence = 0U;
-    position_controller.gps_correction_count = 0U;
-    position_controller.gps_reject_count = 0U;
-    position_controller.velocity_correction_count = 0U;
-
     position_controller.initialized = 0U;
-    position_controller.last_gps_accepted = 0U;
-    position_controller.last_gps_rejected = 0U;
-    position_controller.last_velocity_correction_applied = 0U;
 }
 
 /**
@@ -629,40 +944,21 @@ void PositionController_Reset(void)
  * @param longitude_e7 锚点经度坐标
  * @return true=进入成功并建立局部切面系；false=坐标非法拒绝进入
  */
-bool PositionController_Enter(int32_t latitude_e7,
-                              int32_t longitude_e7,
-                              uint32_t gps_sequence)
+bool PositionController_Enter(const HorizontalEstimator_t *horizontal_state)
 {
     PositionController_Reset();
 
-    if(gps_sequence == 0U ||
-        !PositionController_CoordinateValid(latitude_e7, longitude_e7))
+    if(horizontal_state == NULL ||
+        !horizontal_state->initialized ||
+        !horizontal_state->position_initialized)
     {
         return false;
     }
 
-    const float reference_lat_rad =
-        (float)latitude_e7 * NAV_DEG_E7_TO_RAD;
-
-    position_controller.reference_lat_e7 = latitude_e7;
-    position_controller.reference_lon_e7 = longitude_e7;
-
-    /* 建立从经纬度度数转为平面米单位的换算系数。
-     * 纬度转换保持恒定；经度换算需要结合当前纬度角的余弦值缩小圈长。 */
-    position_controller.meter_per_lat_e7 =
-        NAV_EARTH_RADIUS_M * NAV_DEG_E7_TO_RAD;
-    position_controller.meter_per_lon_e7 =
-        position_controller.meter_per_lat_e7 * cosf(reference_lat_rad);
-
-    /*
-     * 进入模式时当前位置即为局部原点和初始目标。
-     * 记录当前sequence，避免同一个GPS样本被进入函数和Update重复处理。 
-     */
-    position_controller.last_gps_sequence = gps_sequence;
-    position_controller.initialized = 1U;
-    position_controller.brake_stable_time_s = 0.0f;
-    position_controller.brake_elapsed_time_s = 0.0f;
+    position_controller.target_n_m = horizontal_state->position_n_m;
+    position_controller.target_e_m = horizontal_state->position_e_m;
     position_controller.phase = POSITION_CONTROL_PHASE_BRAKING;
+    position_controller.initialized = 1U;
 
     return true;
 }
@@ -670,10 +966,7 @@ bool PositionController_Enter(int32_t latitude_e7,
 /**
  * @brief 位置控制器核心运算逻辑更新(外环)
  */
-bool PositionController_Update(int32_t latitude_e7,
-                               int32_t longitude_e7,
-                               uint32_t gps_sequence,
-                               HorizontalEstimator_t *horizontal_state,
+bool PositionController_Update(HorizontalEstimator_t *horizontal_state,
                                float pilot_velocity_n_mps,
                                float pilot_velocity_e_mps,
                                float dt)
@@ -684,101 +977,22 @@ bool PositionController_Update(int32_t latitude_e7,
     const float velocity_est_n_mps = horizontal_state->velocity_n_mps;
     const float velocity_est_e_mps = horizontal_state->velocity_e_mps;
 
-    const bool velocity_valid =
+    const bool state_valid =
         horizontal_state->initialized &&
+        horizontal_state->position_initialized &&
         velocity_est_n_mps >= -NAV_ESTIMATED_SPEED_LIMIT_MPS &&
         velocity_est_n_mps <= NAV_ESTIMATED_SPEED_LIMIT_MPS &&
         velocity_est_e_mps >= -NAV_ESTIMATED_SPEED_LIMIT_MPS &&
         velocity_est_e_mps <= NAV_ESTIMATED_SPEED_LIMIT_MPS;
 
     if(!position_controller.initialized ||
-        gps_sequence == 0U ||
         dt < 0.0005f || 
         dt > 0.0050f ||
-        !velocity_valid ||
-        !PositionController_CoordinateValid(latitude_e7, longitude_e7))
+        !state_valid)
     {
         return false;
     }
 
-    /* 累计距离上一条新RMC的时间。
-     * 只限制内部计时器的最大值，不会把超时样本伪装成正常dt。 */
-    position_controller.gps_sample_elapsed_s += dt;
-    if(position_controller.gps_sample_elapsed_s > 
-        POSITION_GPS_SAMPLE_ELAPSED_LIMIT_S)
-    {
-        position_controller.gps_sample_elapsed_s =
-            POSITION_GPS_SAMPLE_ELAPSED_LIMIT_S;
-    }
-
-    /* 高频预测：使用同一份融合Velocity推进连续Position。 */
-    position_controller.position_n_m += velocity_est_n_mps * dt;
-    position_controller.position_e_m += velocity_est_e_mps * dt;
-
-    /* 低频GPS联合修正：统一RMC sequence只处理一次。 */
-    if(gps_sequence != position_controller.last_gps_sequence)
-    {
-        const float gps_sample_dt_s =
-            position_controller.gps_sample_elapsed_s;
-
-        position_controller.gps_sample_elapsed_s = 0.0f;
-        position_controller.last_gps_sequence = gps_sequence;
-        position_controller.last_gps_accepted = 0U;
-        position_controller.last_gps_rejected = 0U;
-        position_controller.velocity_correction_n_mps = 0.0f;
-        position_controller.velocity_correction_e_mps = 0.0f;
-        position_controller.last_velocity_correction_applied = 0U;
-
-        // 利用于参考点的差值和换算系数，算出在局部坐标系中的平面坐标（单位：米）
-        const int64_t delta_lat_e7 =
-            (int64_t)latitude_e7 - position_controller.reference_lat_e7;
-        const int64_t delta_lon_e7 =
-            (int64_t)longitude_e7 - position_controller.reference_lon_e7;
-
-        position_controller.gps_position_n_m =
-            (float)delta_lat_e7 * position_controller.meter_per_lat_e7;
-        position_controller.gps_position_e_m =
-            (float)delta_lon_e7 * position_controller.meter_per_lon_e7;
-
-        const float innovation_n_m =
-            position_controller.gps_position_n_m - position_controller.position_n_m;
-        const float innovation_e_m =
-            position_controller.gps_position_e_m - position_controller.position_e_m;
-
-        const float innovation_magnitude =
-            sqrtf(innovation_n_m * innovation_n_m +
-                  innovation_e_m * innovation_e_m);
-
-        if(innovation_magnitude <= POSITION_GPS_INNOVATION_LIMIT_M)
-        {
-            /* alpha项：修正Position。 */
-            position_controller.position_n_m +=
-                POSITION_GPS_CORRECTION_GAIN * innovation_n_m;
-            position_controller.position_e_m +=
-                POSITION_GPS_CORRECTION_GAIN * innovation_e_m;
-
-            /* beta项：用同一个innovation约束Velocity。
-             * 这使Position外环和Velocity内环对“正在往哪里移动”
-             * 使用同一套约束的状态 */
-            PositionController_CorrectVelocity(
-                horizontal_state,
-                innovation_n_m,
-                innovation_e_m,
-                gps_sample_dt_s);
-
-            position_controller.gps_correction_count++;
-            position_controller.last_gps_accepted = 1U;
-        }
-        else
-        {
-            /* 拒绝位置跳变时，Position和Velocity都不能吸收该innovation，
-             * 否则两个状态会再次失去一致性。 */
-            position_controller.gps_reject_count++;
-            position_controller.last_gps_rejected = 1U;
-        }
-    }
-
-    // 限制摇杆目标速度的二维模长，避免对角打杆超过单轴约定速度。
     Navigation_LimitVector(&pilot_velocity_n_mps,
                            &pilot_velocity_e_mps,
                            POSITION_PILOT_SPEED_LIMIT_MPS);
@@ -800,11 +1014,12 @@ bool PositionController_Update(int32_t latitude_e7,
         position_controller.brake_stable_time_s = 0.0f;
         position_controller.brake_elapsed_time_s = 0.0f;
 
-        position_controller.target_n_m = position_controller.position_n_m;
-        position_controller.target_e_m = position_controller.position_e_m;
+        /* MOVING期间目标点随Estimator Position移动；
+         * Controller不积累人工机动产生的位置误差。 */
+        position_controller.target_n_m = horizontal_estimator.position_n_m;
+        position_controller.target_e_m = horizontal_estimator.position_e_m;
         position_controller.error_n_m = 0.0f;
         position_controller.error_e_m = 0.0f;
-
         position_controller.velocity_target_n_mps = pilot_velocity_n_mps;
         position_controller.velocity_target_e_mps = pilot_velocity_e_mps;
         return true;
@@ -816,32 +1031,29 @@ bool PositionController_Update(int32_t latitude_e7,
         position_controller.phase = POSITION_CONTROL_PHASE_BRAKING;
         position_controller.brake_stable_time_s = 0.0f;
         position_controller.brake_elapsed_time_s = 0.0f;
-    }
+    } 
 
     if(position_controller.phase == POSITION_CONTROL_PHASE_BRAKING)
     {
-        position_controller.target_n_m = position_controller.position_n_m;
-        position_controller.target_e_m = position_controller.position_e_m;
+        position_controller.target_n_m = horizontal_state->position_n_m;
+        position_controller.target_e_m = horizontal_state->position_e_m;
         position_controller.error_n_m = 0.0f;
         position_controller.error_e_m = 0.0f;
         position_controller.velocity_target_n_mps = 0.0f;
         position_controller.velocity_target_e_mps = 0.0f;
 
         position_controller.brake_elapsed_time_s += dt;
-        if(position_controller.brake_elapsed_time_s > 
-            POSITION_BRAKE_MAX_TIME_S)
-        {
+        if(position_controller.brake_elapsed_time_s > POSITION_BRAKE_MAX_TIME_S)
             position_controller.brake_elapsed_time_s = POSITION_BRAKE_MAX_TIME_S;
-        }
 
         if(estimated_speed_mps <= POSITION_BRAKE_CAPTURE_SPEED_MPS)
         {
             position_controller.brake_stable_time_s += dt;
-
-            if(position_controller.brake_stable_time_s >= 
+            if(position_controller.brake_stable_time_s >
                 POSITION_BRAKE_CAPTURE_TIME_S)
             {
-                position_controller.brake_stable_time_s = POSITION_BRAKE_CAPTURE_TIME_S;
+                position_controller.brake_stable_time_s =
+                    POSITION_BRAKE_CAPTURE_TIME_S;
             }
         }
         else
@@ -852,7 +1064,6 @@ bool PositionController_Update(int32_t latitude_e7,
         const bool speed_capture_ready =
             position_controller.brake_stable_time_s >=
             POSITION_BRAKE_CAPTURE_TIME_S;
-
         const bool brake_timeout =
             position_controller.brake_elapsed_time_s >=
             POSITION_BRAKE_MAX_TIME_S;
@@ -860,24 +1071,20 @@ bool PositionController_Update(int32_t latitude_e7,
         if(speed_capture_ready || brake_timeout)
         {
             position_controller.phase = POSITION_CONTROL_PHASE_HOLD;
-            position_controller.target_n_m =
-                position_controller.position_n_m;
-            position_controller.target_e_m =
-                position_controller.position_e_m;
+            position_controller.target_n_m = horizontal_state->position_n_m;
+            position_controller.target_e_m = horizontal_state->position_e_m;
         }
 
         return true;
     }
 
     if(position_controller.phase != POSITION_CONTROL_PHASE_HOLD)
-    {
         return false;
-    }
 
     position_controller.error_n_m =
-        position_controller.target_n_m - position_controller.position_n_m;
+        position_controller.target_n_m - horizontal_state->position_n_m;
     position_controller.error_e_m =
-        position_controller.target_e_m - position_controller.position_e_m;
+        position_controller.target_e_m - horizontal_state->position_e_m;
 
     const float error_magnitude = sqrtf(
         position_controller.error_n_m * position_controller.error_n_m +
@@ -889,13 +1096,10 @@ bool PositionController_Update(int32_t latitude_e7,
     float correction_error_n_m = 0.0f;
     float correction_error_e_m = 0.0f;
 
-    /* 径向deadband：消除误差模长的前POSITION_DEADBAND_M。
-     * 避免GPS单次小幅跳动直接形成位置修正。 */
     if(error_magnitude > POSITION_DEADBAND_M)
     {
         const float scale =
             (error_magnitude - POSITION_DEADBAND_M) / error_magnitude;
-
         correction_error_n_m = position_controller.error_n_m * scale;
         correction_error_e_m = position_controller.error_e_m * scale;
     }
@@ -905,7 +1109,6 @@ bool PositionController_Update(int32_t latitude_e7,
     position_controller.velocity_target_e_mps =
         position_controller.kp * correction_error_e_m;
 
-    // 对输出速度指令进行整体二维模长限幅保护
     Navigation_LimitVector(
         &position_controller.velocity_target_n_mps,
         &position_controller.velocity_target_e_mps,

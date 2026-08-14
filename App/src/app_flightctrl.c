@@ -29,6 +29,8 @@
 
 #define AIRMODE_DEACTIVATION_THROTTLE 20U
 
+#define FLIGHT_ACCEL_BIAS_SETTLE_TIME_S 1.0f
+
 /* 第一阶段必须保持0：Estimator和日志运行，但不覆盖Roll/Pitch目标。
  * 无桨数据确认GPS更新率、N/E方向和Accel符号后才改1。 */
 #define VELOCITY_HOLD_CONTROL_ENABLE 1U
@@ -38,6 +40,19 @@
 #define HORIZONTAL_MODE_SC_MIDDLE_MIN 700U
 #define HORIZONTAL_MODE_SC_MIDDLE_MAX 1300U
 #define HORIZONTAL_MODE_SC_HIGH_MIN 1600U
+#define HORIZONTAL_PILOT_ACCEL_LIMIT_MPS2 6.0f
+
+#define HORIZONTAL_MODE_ENTRY_MAX_VELOCITY_ERROR_MPS 0.50f
+#define HORIZONTAL_MODE_ENTRY_MAX_POSITION_ERROR_M 1.00f
+#define HORIZONTAL_MODE_ENTRY_GPS_ACCEPT_STREAK 3U
+#define HORIZONTAL_MODE_ENTRY_POSITION_ACCEPT_STREAK 3U
+#define HORIZONTAL_MODE_BLEND_TIME_S 0.50f
+
+#define HORIZONTAL_BIAS_STATIONARY_TIME_S 1.0f
+#define HORIZONTAL_BIAS_GYRO_MAX_DPS 3.0f
+#define HORIZONTAL_BIAS_ACCEL_NORM_MIN_G 0.85f
+#define HORIZONTAL_BIAS_ACCEL_NORM_MAX_G 1.15f
+#define HORIZONTAL_BIAS_GPS_SPEED_MAX_MPS 0.15f
 
 #define VELOCITY_HOLD_MAX_SPEED_MPS 2.0f
 #define POSITION_HOLD_PILOT_SPEED_MPS 1.50f
@@ -88,6 +103,13 @@ static uint8_t s_horizontal_manual_seen;
 
 static float s_velocity_target_n_mps;
 static float s_velocity_target_e_mps;
+static float s_pilot_velocity_cmd_n_mps;
+static float s_pilot_velocity_cmd_e_mps;
+
+static float s_flight_accel_bias_hold_time_s;
+
+static float s_disarmed_accel_bias_stationary_time_s;
+static float s_horizontal_control_blend;
 
 void FlightControl_Init(void)
 {
@@ -105,6 +127,9 @@ void FlightControl_Init(void)
     fc.yaw_mode = 0;
     fc.yaw_target = 0.0f;
     fc.airmode_active = 0U;
+
+    s_disarmed_accel_bias_stationary_time_s = 0.0f;
+    s_horizontal_control_blend = 0.0f;
 }
 
 static void FlightControl_Reset(void)
@@ -141,6 +166,13 @@ static void FlightControl_Reset(void)
 
     s_velocity_target_n_mps = 0.0f;
     s_velocity_target_e_mps = 0.0f;
+
+    s_flight_accel_bias_hold_time_s = 0.0f;
+
+    s_pilot_velocity_cmd_n_mps = 0.0f;
+    s_pilot_velocity_cmd_e_mps = 0.0f;
+
+    s_horizontal_control_blend = 0.0f;
 }
 
 /**
@@ -175,12 +207,52 @@ static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float 
         s_nav_last.gps_velocity_n_mps * s_nav_last.gps_velocity_n_mps +
         s_nav_last.gps_velocity_e_mps * s_nav_last.gps_velocity_e_mps);
 
-    /* 只在Disarmed、GPS有效且近似静止时学习水平Accel bias；
-     * Armed后冻结，不能把真实飞行动力学学成传感器偏差 */
-    const bool learn_accel_bias =
+    const float accel_norm_sq =
+        imu->ax * imu->ax +
+        imu->ay * imu->ay +
+        imu->az * imu->az;
+    const float accel_norm_min_sq =
+        HORIZONTAL_BIAS_ACCEL_NORM_MIN_G *
+        HORIZONTAL_BIAS_ACCEL_NORM_MIN_G;
+    const float accel_norm_max_sq =
+        HORIZONTAL_BIAS_ACCEL_NORM_MAX_G *
+        HORIZONTAL_BIAS_ACCEL_NORM_MAX_G;
+
+    const bool imu_stationary =
+        fabsf(imu->gx) <= HORIZONTAL_BIAS_GYRO_MAX_DPS &&
+        fabsf(imu->gy) <= HORIZONTAL_BIAS_GYRO_MAX_DPS &&
+        fabsf(imu->gz) <= HORIZONTAL_BIAS_GYRO_MAX_DPS &&
+        accel_norm_sq >= accel_norm_min_sq &&
+        accel_norm_sq <= accel_norm_max_sq;
+
+    const bool disarmed_bias_candidate =
         (g_arm_state == ARM_STATE_DISARMED) &&
         (s_nav_last.gps_velocity_valid != 0U) &&
-        (gps_speed < 0.25f);
+        (gps_speed < HORIZONTAL_BIAS_GPS_SPEED_MAX_MPS) &&
+        imu_stationary;
+
+    if(disarmed_bias_candidate && dt >= 0.0005f && dt <= 0.0050f)
+    {
+        if(s_disarmed_accel_bias_stationary_time_s <
+            HORIZONTAL_BIAS_STATIONARY_TIME_S)
+        {
+            s_disarmed_accel_bias_stationary_time_s += dt;
+            if (s_disarmed_accel_bias_stationary_time_s >
+                HORIZONTAL_BIAS_STATIONARY_TIME_S)
+            {
+                s_disarmed_accel_bias_stationary_time_s =
+                    HORIZONTAL_BIAS_STATIONARY_TIME_S;
+            }
+        }
+    }
+    else
+    {
+        s_disarmed_accel_bias_stationary_time_s = 0.0f;
+    }
+
+    const bool learn_accel_bias =
+        s_disarmed_accel_bias_stationary_time_s >=
+        HORIZONTAL_BIAS_STATIONARY_TIME_S;
 
     const float navigation_yaw_rad =
         attitude.yaw + NAV_MAG_DECLINATION_DEG * 0.0174532925f;
@@ -194,6 +266,55 @@ static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float 
                                 dt,
                                 learn_accel_bias);
 
+    const float gps_velocity_candidate_disagreement_n_mps =
+        s_nav_last.rmc_velocity_n_mps -
+        s_nav_last.gps_position_velocity_n_mps;
+    const float gps_velocity_candidate_disagreement_e_mps =
+        s_nav_last.rmc_velocity_e_mps -
+        s_nav_last.gps_position_velocity_e_mps;
+    const float gps_velocity_candidate_disagreement_mps = sqrtf(
+        gps_velocity_candidate_disagreement_n_mps *
+            gps_velocity_candidate_disagreement_n_mps +
+        gps_velocity_candidate_disagreement_e_mps *
+            gps_velocity_candidate_disagreement_e_mps);
+
+    const bool flight_accel_bias_context_valid =
+        (g_arm_state == ARM_STATE_ARMED) &&
+        (s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) &&
+        (position_controller.phase == POSITION_CONTROL_PHASE_HOLD) &&
+        (s_nav_last.gps_velocity_valid != 0U) &&
+        (s_nav_last.gps_velocity_control_ready != 0U) &&
+        (s_nav_last.gps_position_velocity_valid != 0U) &&
+        (gps_velocity_candidate_disagreement_mps <= 0.30f);
+
+    if (flight_accel_bias_context_valid)
+    {
+        if (s_flight_accel_bias_hold_time_s <
+            FLIGHT_ACCEL_BIAS_SETTLE_TIME_S)
+        {
+            s_flight_accel_bias_hold_time_s += dt;
+
+            if (s_flight_accel_bias_hold_time_s >
+                FLIGHT_ACCEL_BIAS_SETTLE_TIME_S)
+            {
+                s_flight_accel_bias_hold_time_s =
+                    FLIGHT_ACCEL_BIAS_SETTLE_TIME_S;
+            }
+        }
+    }
+    else
+    {
+        s_flight_accel_bias_hold_time_s = 0.0f;
+    }
+
+    const bool allow_flight_accel_bias_correction =
+        flight_accel_bias_context_valid &&
+        (s_flight_accel_bias_hold_time_s >=
+         FLIGHT_ACCEL_BIAS_SETTLE_TIME_S);
+
+    const bool allow_estimator_state_reacquire =
+        (s_horizontal_mode_active == HORIZONTAL_MODE_MANUAL);
+
     if(s_nav_last.rmc_sequence != horizontal_estimator.last_gps_sequence)
     {
         (void)HorizontalEstimator_CorrectGps(
@@ -201,7 +322,35 @@ static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float 
             s_nav_last.gps_velocity_e_mps,
             s_nav_last.rmc_sequence,
             s_nav_last.rmc_last_update_ms,
-            s_nav_last.gps_velocity_valid != 0U);
+            navigation_yaw_rad,
+            s_nav_last.gps_velocity_valid != 0U,
+            allow_flight_accel_bias_correction,
+            allow_estimator_state_reacquire);
+    }
+
+    if(s_nav_last.gps_position_control_ready == 0U)
+    {
+        /* Position质量失效后清除局部参考系;恢复时从当前坐标重新建立,
+         * 避免拿长时间失锁前的局部状态吸收一次巨大innovation. */
+        if(horizontal_estimator.position_initialized)
+            HorizontalEstimator_ResetPosition();
+    }
+    else if(!horizontal_estimator.position_initialized)
+    {
+        (void)HorizontalEstimator_SetPositionReference(
+            s_nav_last.gps_lat,
+            s_nav_last.gps_lon,
+            s_nav_last.rmc_sequence);
+    }
+    else if(s_nav_last.rmc_sequence != 
+            horizontal_estimator.last_position_sequence)
+    {
+        (void)HorizontalEstimator_CorrectPosition(
+            s_nav_last.gps_lat,
+            s_nav_last.gps_lon,
+            s_nav_last.rmc_sequence,
+            true,
+            allow_estimator_state_reacquire);
     }
 
     HorizontalEstimator_UpdateHealth(HAL_GetTick());
@@ -244,6 +393,72 @@ static void FlightControl_ExitHorizontalMode(void)
     s_horizontal_mode_active = HORIZONTAL_MODE_MANUAL;
     s_velocity_target_n_mps = 0.0f;
     s_velocity_target_e_mps = 0.0f;
+
+    s_pilot_velocity_cmd_n_mps = 0.0f;
+    s_pilot_velocity_cmd_e_mps = 0.0f;
+
+    s_horizontal_control_blend = 0.0f;
+}
+
+static bool FlightControl_HorizontalVelocityEntryConsistent(void)
+{
+    if(!horizontal_estimator.initialized ||
+        !horizontal_estimator.last_gps_accepted ||
+        s_nav_last.gps_velocity_valid == 0U)
+    {
+        return false;
+    }
+
+    const float rmc_speed_mps = sqrtf(
+        s_nav_last.gps_velocity_n_mps *
+            s_nav_last.gps_velocity_n_mps +
+        s_nav_last.gps_velocity_e_mps *
+            s_nav_last.gps_velocity_e_mps);
+
+    if(!(rmc_speed_mps >= 0.0f && rmc_speed_mps <= 30.0f))
+        return false;
+
+    const bool rmc_course_usable =
+        rmc_speed_mps >= NAV_RMC_VECTOR_MIN_SPEED_MPS;
+    const float observed_velocity_n_mps =
+        rmc_course_usable ? s_nav_last.gps_velocity_n_mps : 0.0f;
+    const float observed_velocity_e_mps =
+        rmc_course_usable ? s_nav_last.gps_velocity_e_mps : 0.0f;
+
+    const float error_e_mps =
+        observed_velocity_n_mps - horizontal_estimator.velocity_n_mps;
+    const float error_n_mps =
+        observed_velocity_e_mps - horizontal_estimator.velocity_e_mps;
+    const float error_mps = sqrtf(
+        error_n_mps * error_n_mps +
+        error_e_mps * error_e_mps);
+
+    return error_mps >= 0.0f &&
+           error_mps <=
+               HORIZONTAL_MODE_ENTRY_MAX_VELOCITY_ERROR_MPS;
+}
+
+static bool FlightControl_HorizontalPositionEntryConsistent(void)
+{
+    if(!horizontal_estimator.position_initialized ||
+        !horizontal_estimator.last_position_accepted ||
+        horizontal_estimator.last_position_rejected)
+    {
+        return false;
+    }
+
+    const float error_n_m =
+        horizontal_estimator.gps_position_n_m -
+        horizontal_estimator.position_n_m;
+    const float error_e_m =
+        horizontal_estimator.gps_position_e_m -
+        horizontal_estimator.position_e_m;
+    const float error_m = sqrtf(
+        error_n_m * error_n_m +
+        error_e_m * error_e_m);
+
+    return error_m >= 0.0f &&
+           error_m <= HORIZONTAL_MODE_ENTRY_MAX_POSITION_ERROR_M;
 }
 
 /**
@@ -269,6 +484,9 @@ static bool FlightControl_TryEnterHorizontalMode(FlightHorizontalMode_t requeste
     const bool common_entry_ready =
         (s_nav_last.gps_velocity_control_ready != 0U) &&
         estimator_healthy &&
+        (horizontal_estimator.gps_accept_streak >=
+        HORIZONTAL_MODE_ENTRY_GPS_ACCEPT_STREAK) &&
+        FlightControl_HorizontalVelocityEntryConsistent() &&
         fc.throttle >= HORIZONTAL_MODE_ENTRY_MIN_THROTTLE;
 
     if(!common_entry_ready)
@@ -276,6 +494,15 @@ static bool FlightControl_TryEnterHorizontalMode(FlightHorizontalMode_t requeste
 
     const bool entering_from_manual =
         (s_horizontal_mode_active == HORIZONTAL_MODE_MANUAL);
+
+    if(entering_from_manual)
+    {
+        s_pilot_velocity_cmd_n_mps =
+            horizontal_estimator.velocity_n_mps;
+        s_pilot_velocity_cmd_e_mps =
+            horizontal_estimator.velocity_e_mps;
+        s_horizontal_control_blend = 0.0f;
+    }
 
     if(requested == HORIZONTAL_MODE_VELOCITY_HOLD)
     {
@@ -294,12 +521,18 @@ static bool FlightControl_TryEnterHorizontalMode(FlightHorizontalMode_t requeste
 
     if(requested == HORIZONTAL_MODE_POSITION_HOLD)
     {
-        if(s_nav_last.gps_position_control_ready == 0U)
+        if(s_nav_last.gps_position_control_ready == 0U ||
+            !horizontal_estimator.position_initialized ||
+            !horizontal_estimator.last_position_accepted ||
+            horizontal_estimator.last_position_rejected ||
+            horizontal_estimator.position_accept_streak <
+                HORIZONTAL_MODE_ENTRY_POSITION_ACCEPT_STREAK ||
+            !FlightControl_HorizontalPositionEntryConsistent())
+        {
             return false;
+        }
 
-        if(!PositionController_Enter(s_nav_last.gps_lat, 
-                                        s_nav_last.gps_lon,
-                                        s_nav_last.rmc_sequence))
+        if(!PositionController_Enter(&horizontal_estimator))
         {
             return false;
         }
@@ -310,6 +543,8 @@ static bool FlightControl_TryEnterHorizontalMode(FlightHorizontalMode_t requeste
          */
         if(entering_from_manual)
             VelocityController_Reset();
+        else
+            VelocityController_ResetIntegral();
 
         s_horizontal_mode_active = HORIZONTAL_MODE_POSITION_HOLD;
         return true;
@@ -359,6 +594,42 @@ static void FlightControl_GetPilotVelocityNe(float max_speed_mps,
         sy * velocity_forward_mps + cy * velocity_right_mps;
 }
 
+/**
+ * @brief   限制Pilot Velocity command的二维变化率。
+ * 
+ * @note    这里只整形飞手输入，不限制Position/Velocity Controller的反馈
+ *          Acceleration，因此风扰反馈仍可立即使用完整控制权限。
+ */
+static void FlightControl_UpdatePilotVelocityCommand(float target_n_mps,
+                                                     float target_e_mps,
+                                                     float dt,
+                                                     float *command_n_mps,
+                                                     float *command_e_mps)
+{
+    if(command_n_mps == NULL || command_e_mps == NULL)
+        return;
+
+    const float delta_n_mps = target_n_mps - *command_n_mps;
+    const float delta_e_mps = target_e_mps - *command_e_mps;
+    const float delta_mps = sqrtf(
+        delta_n_mps * delta_n_mps +
+        delta_e_mps * delta_e_mps);
+    const float max_step_mps =
+        HORIZONTAL_PILOT_ACCEL_LIMIT_MPS2 * dt;
+    
+    if(delta_mps > max_step_mps && delta_mps > 0.0001f)
+    {
+        const float scale = max_step_mps / delta_mps;
+        *command_n_mps += delta_n_mps * scale;
+        *command_e_mps += delta_e_mps * scale;
+    }
+    else
+    {
+        *command_n_mps = target_n_mps;
+        *command_e_mps = target_e_mps;
+    }
+}
+
 static void FlightControl_UpdateHorizontalMode(float dt)
 {
     const FlightHorizontalMode_t requested =
@@ -393,7 +664,11 @@ static void FlightControl_UpdateHorizontalMode(float dt)
         {
             maintain_ready =
                 maintain_ready &&
-                (s_nav_last.gps_position_control_ready != 0U);
+                (s_nav_last.gps_position_control_ready != 0U) &&
+                horizontal_estimator.position_initialized &&
+                (horizontal_estimator.position_accept_streak >=
+                 HORIZONTAL_MODE_ENTRY_POSITION_ACCEPT_STREAK) &&
+                (horizontal_estimator.last_position_rejected == 0U);
         }
 
         if(!maintain_ready)
@@ -445,23 +720,34 @@ static void FlightControl_UpdateHorizontalMode(float dt)
     const float yaw_rad =
         (fc.yaw_meas + NAV_MAG_DECLINATION_DEG) * 0.0174532925f;
 
-    float pilot_velocity_n_mps;
-    float pilot_velocity_e_mps;
+    float pilot_velocity_target_n_mps;
+    float pilot_velocity_target_e_mps;
+
+    const float pilot_speed_limit_mps =
+        (s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) ?
+        POSITION_HOLD_PILOT_SPEED_MPS :
+        VELOCITY_HOLD_MAX_SPEED_MPS;
+
+    FlightControl_GetPilotVelocityNe(
+        pilot_speed_limit_mps,
+        yaw_rad,
+        &pilot_velocity_target_n_mps,
+        &pilot_velocity_target_e_mps);
+
+    FlightControl_UpdatePilotVelocityCommand(
+        pilot_velocity_target_n_mps,
+        pilot_velocity_target_e_mps,
+        dt,
+        &s_pilot_velocity_cmd_n_mps,
+        &s_pilot_velocity_cmd_e_mps);
 
     if(s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD)
     {
-        FlightControl_GetPilotVelocityNe(POSITION_HOLD_PILOT_SPEED_MPS,
-                                         yaw_rad,
-                                         &pilot_velocity_n_mps,
-                                         &pilot_velocity_e_mps);
-
-        if(!PositionController_Update(s_nav_last.gps_lat,
-                                        s_nav_last.gps_lon,
-                                        s_nav_last.rmc_sequence,
-                                        &horizontal_estimator,
-                                        pilot_velocity_n_mps,
-                                        pilot_velocity_e_mps,
-                                        dt))
+        if(!PositionController_Update(
+            &horizontal_estimator,
+            s_pilot_velocity_cmd_n_mps,
+            s_pilot_velocity_cmd_e_mps,
+            dt))
         {
             FlightControl_ExitHorizontalMode();
             s_horizontal_manual_seen = 0U;
@@ -476,24 +762,45 @@ static void FlightControl_UpdateHorizontalMode(float dt)
     }
     else
     {
-        FlightControl_GetPilotVelocityNe(VELOCITY_HOLD_MAX_SPEED_MPS,
-                                         yaw_rad,
-                                         &s_velocity_target_n_mps,
-                                         &s_velocity_target_e_mps);
+        s_velocity_target_n_mps = s_pilot_velocity_cmd_n_mps;
+        s_velocity_target_e_mps = s_pilot_velocity_cmd_e_mps;
     }
+
+    /*
+     * Position Hold只有HOLD阶段允许从Velocity error学习抗风Integral。
+     * MOVING/BRAKING仍使用已有I输出和D阻尼，但不把飞手机动写I。
+     * Velocity Hold的控制目标本身就是Velocity，因此保持I学习。
+     */
+    const bool allow_velocity_integral_learning =
+        (s_horizontal_mode_active == HORIZONTAL_MODE_VELOCITY_HOLD) ||
+        ((s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) &&
+         (position_controller.phase == POSITION_CONTROL_PHASE_HOLD));
 
     VelocityController_Update(
         s_velocity_target_n_mps,
         s_velocity_target_e_mps,
         horizontal_estimator.velocity_n_mps,
         horizontal_estimator.velocity_e_mps,
+        horizontal_estimator.accel_n_mps2,
+        horizontal_estimator.accel_e_mps2,
         yaw_rad,
+        allow_velocity_integral_learning,
         dt);
 
     FlightControl_RefreshHorizontalModeFlags(requested);
 
-    fc.roll_target = velocity_controller.roll_target_deg;
-    fc.pitch_target = velocity_controller.pitch_target_deg;
+    if(s_horizontal_control_blend < 1.0f)
+    {
+        s_horizontal_control_blend +=
+            dt / HORIZONTAL_MODE_BLEND_TIME_S;
+        if(s_horizontal_control_blend > 1.0f)
+            s_horizontal_control_blend = 1.0f;
+    }
+
+    fc.roll_target += s_horizontal_control_blend *
+                      (velocity_controller.roll_target_deg - fc.roll_target);
+    fc.pitch_target += s_horizontal_control_blend *
+                       (velocity_controller.pitch_target_deg - fc.pitch_target);
 }
 
 
@@ -992,19 +1299,18 @@ void App_FlightCtrl_Task(void *argument)
 
                 nav_log.gps_age_ms = s_nav_last.rmc_age_ms;
                 nav_log.rmc_period_ms = s_nav_last.rmc_period_ms;
-                nav_log.gps_hdop_centi =
-                    BB_ToUInt16(s_nav_last.gps_hdop, 100.0f);
+                nav_log.gps_hdop_centi = BB_ToUInt16(s_nav_last.gps_hdop, 100.0f);
                 nav_log.gps_satellites = s_nav_last.gps_satellites;
                 nav_log.gps_position_n_cm = BB_ToInt16(
-                    position_controller.gps_position_n_m, 100.0f);
+                    horizontal_estimator.gps_position_n_m, 100.0f);
                 nav_log.gps_position_e_cm = BB_ToInt16(
-                    position_controller.gps_position_e_m, 100.0f);
+                    horizontal_estimator.gps_position_e_m, 100.0f);
 
-                if (position_controller.last_gps_accepted)
+                if (horizontal_estimator.last_position_accepted)
                     nav_log.position_flags |= (1U << 5);
-                if (position_controller.last_gps_rejected)
+                if (horizontal_estimator.last_position_rejected)
                     nav_log.position_flags |= (1U << 6);
-                if (position_controller.last_velocity_correction_applied)
+                if (horizontal_estimator.last_position_velocity_correction_applied)
                     nav_log.position_flags |= (1U << 7);
                 if (s_nav_last.gps_velocity_valid)
                     nav_log.flags |= (1U << 0);
@@ -1025,9 +1331,9 @@ void App_FlightCtrl_Task(void *argument)
                     nav_log.flags |= (1U << 7);
 
                 nav_log.position_n_cm = BB_ToInt16(
-                    position_controller.position_n_m, 100.0f);
+                    horizontal_estimator.position_n_m, 100.0f);
                 nav_log.position_e_cm = BB_ToInt16(
-                    position_controller.position_e_m, 100.0f);
+                    horizontal_estimator.position_e_m, 100.0f);
                 nav_log.position_target_n_cm = BB_ToInt16(
                     position_controller.target_n_m, 100.0f);
                 nav_log.position_target_e_cm = BB_ToInt16(
