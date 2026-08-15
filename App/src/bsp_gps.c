@@ -11,7 +11,16 @@
 #define GPS_HOME_MIN_SATELLITES 4       // 起飞点记录成功所需卫星最小数量
 #define GPS_RMC_UTC_MAX_LEN 16U
 
-#define GPS_RUNTIME_BAUDRATE 57600U
+#define GPS_BOOT_BAUDRATE 9600U
+#define GPS_RUNTIME_BAUDRATE 115200U
+
+#define GPS_RUNTIME_RATE_VERITY_SAMPLES 10U
+#define GPS_RUNTIME_RATE_AVG_MIN_MS 70U
+#define GPS_RUNTIME_RATE_AVG_MAX_MS 140U
+#define GPS_RUNTIME_RATE_VERIFY_TIMEOUT_MS 4000U
+#define GPS_RUNTIME_RETRY_MIN_INTERVAL_MS 3000U
+#define GPS_RUNTIME_RMC_LOSS_TIMEOUT_MS 2000U
+#define GPS_RUNTIME_BAD_WINDOWS_BEFORE_RETRY 2U
 
 #pragma arm section zidata = "DMA_SAFE_SRAM"
 static uint8_t gps_dma_buf[GPS_DMA_BUF_SIZE];  // DMA直接写入区
@@ -28,40 +37,139 @@ static char s_last_rmc_utc[GPS_RMC_UTC_MAX_LEN];
 
 static GPS_Data_t gps_data;
 static GPS_Home_t gps_home;
+static uint32_t s_gps_runtime_verify_started_ms;
+static uint32_t s_gps_runtime_last_config_attempt_ms;
+static uint32_t s_gps_runtime_last_checked_sequence;
+static uint32_t s_gps_rumtime_period_sum_ms;
+static uint8_t s_gps_runtime_period_sample_count;
+static uint8_t s_gps_runtime_bad_window_count;
+static uint8_t s_gps_runtime_rate_verifed;
+static uint8_t s_gps_runtime_reconfigure_requested;
 
-static const uint8_t s_gps_set_baud_57600[] = "$PCAS01,4*18\r\n";
-static const uint8_t s_gps_set_rate_5hz[] = "$PCAS02,200*1D\r\n";
+static const uint8_t s_gps_set_baud_115200[] = "$PCAS01,5*19\r\n";
+static const uint8_t s_gps_set_nmea_gga_rmc_only[] = "$PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0,,,,0*32\r\n";
+static const uint8_t s_gps_set_rate_10hz[] = "$PCAS02,100*1E\r\n";
 
-static bool GPS_ConfigureRuntime(void)
+static bool GPS_SetUartBaudrate(uint32_t baudrate)
 {
-    if(HAL_UART_Transmit(&huart4,
-                        (uint8_t *)s_gps_set_baud_57600,
-                        sizeof(s_gps_set_baud_57600) - 1U,
-                        100U) != HAL_OK)
-    {
+    huart4.Init.BaudRate = baudrate;
+    return HAL_UART_Init(&huart4) == HAL_OK;
+}
+
+static bool GPS_SendCommand(const uint8_t *command, uint16_t length)
+{
+    if(command == NULL || length == 0U)
         return false;
-    }
 
-    osDelay(100U);
+    return HAL_UART_Transmit(&huart4,
+                             (uint8_t *)command,
+                             length,
+                             100U) == HAL_OK;
+}
 
-    huart4.Init.BaudRate = GPS_RUNTIME_BAUDRATE;
-    if(HAL_UART_Init(&huart4) != HAL_OK)
-    {
-        return false;
-    }
+static void GPS_ResetReceiveState(void)
+{
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
 
+    gps_proc_len = 0U;
+    gps_data_ready = 0U;
+    s_nmea_line_len = 0U;
+    s_nmea_collecting = 0U;
+    s_last_rmc_utc[0] = '\0';
+
+    if(primask == 0U)
+        __enable_irq();
+}
+
+static bool GPS_StartReceiveDma(void)
+{
     __HAL_UART_CLEAR_OREFLAG(&huart4);
 
-    if(HAL_UART_Transmit(&huart4,
-                        (uint8_t *)s_gps_set_rate_5hz,
-                        sizeof(s_gps_set_rate_5hz) - 1U,
-                        100U) != HAL_OK)
+    if(HAL_UARTEx_ReceiveToIdle_DMA(&huart4,
+                                    gps_dma_buf,
+                                    GPS_DMA_BUF_SIZE) != HAL_OK)
     {
         return false;
     }
 
-    osDelay(100U);
+    __HAL_DMA_DISABLE_IT(huart4.hdmarx, DMA_IT_HT);
     return true;
+}
+
+static void GPS_ResetRumtimeRateVerification(uint32_t now_ms)
+{
+    s_gps_runtime_verify_started_ms = now_ms;
+    s_gps_runtime_last_checked_sequence = gps_data.rmc_sequence;
+    s_gps_rumtime_period_sum_ms = 0U;
+    s_gps_runtime_period_sample_count = 0U;
+    s_gps_runtime_bad_window_count = 0U;
+    s_gps_runtime_rate_verifed = 0U;
+    s_gps_runtime_reconfigure_requested = 0U;
+}
+
+/**
+ * @brief   从GPS可能处于9600或115200两种状态出发，统一配置到115200、10Hz。
+ * @note    PCAS命令没有可靠ACK，因此HAL发送成功只代表本机发送完成；
+ *          最终是否成功必须由后续RMC实际周期验证。
+ */
+static bool GPS_ConfigureRuntime(void)
+{
+    bool local_operation_ok = true;
+
+    /* 防止UART重初始化与RX回调并发 */
+    (void)HAL_UART_AbortReceive(&huart4);
+    GPS_ResetReceiveState();
+
+    /* 先在9600发送一次切换命令：GPS若仍为出厂波特率，会切到1115200；
+     * GPS若本来就在115200，只会忽略这段错误波特率数据 */
+    if(!GPS_SetUartBaudrate(GPS_BOOT_BAUDRATE))
+        local_operation_ok = false;
+
+    __HAL_UART_CLEAR_OREFLAG(&huart4);
+    if(!GPS_SendCommand(s_gps_set_baud_115200,
+                        sizeof(s_gps_set_baud_115200) - 1U))
+    {
+        local_operation_ok = false;
+    }
+
+    osDelay(100U);
+
+    /* MCU切到115200后再次发送波特率命令：兼容GPS上电时已经处于115200的情况，
+     * 同时保证失败重试包含波特率配置，而不只是重发语句和频率配置。 */
+    if(!GPS_SetUartBaudrate(GPS_RUNTIME_BAUDRATE))
+        return false;
+
+    __HAL_UART_CLEAR_OREFLAG(&huart4);
+    if(!GPS_SendCommand(s_gps_set_baud_115200,
+                        sizeof(s_gps_set_baud_115200) - 1U))
+    {
+        local_operation_ok = false;
+    }
+
+    osDelay(50U);
+
+    if(!GPS_SendCommand(s_gps_set_nmea_gga_rmc_only,
+                        sizeof(s_gps_set_nmea_gga_rmc_only) - 1U))
+    {
+        local_operation_ok = false;
+    }
+
+    osDelay(50U);
+
+    if(!GPS_SendCommand(s_gps_set_rate_10hz,
+                        sizeof(s_gps_set_rate_10hz) - 1U))
+    {
+        local_operation_ok = false;
+    }
+
+    osDelay(100U);
+
+    GPS_ResetReceiveState();
+    if(!GPS_StartReceiveDma())
+        return false;
+
+    return local_operation_ok;
 }
 
 /**
@@ -71,14 +179,13 @@ void GPS_Init(void)
 {
     osDelay(2000U);
 
-    (void)GPS_ConfigureRuntime();
+    const uint32_t now_ms = HAL_GetTick();
+    s_gps_runtime_last_config_attempt_ms = now_ms;
 
     __HAL_UART_CLEAR_OREFLAG(&huart4);
 
-    if(HAL_UARTEx_ReceiveToIdle_DMA(&huart4, gps_dma_buf, GPS_DMA_BUF_SIZE) == HAL_OK)
-    {
-        __HAL_DMA_DISABLE_IT(huart4.hdmarx, DMA_IT_HT);     // 半传输中断用不上，关掉减少无谓触发
-    }
+    (void)GPS_ConfigureRuntime();
+    GPS_ResetRumtimeRateVerification(now_ms);
 }
 
 /**
@@ -408,6 +515,100 @@ void GPS_Poll(void)
             s_nmea_line_len = 0U;
         }
     }
+}
+
+void GPS_RuntimeService(bool allow_reconfigure)
+{
+    const uint32_t now_ms = HAL_GetTick();
+
+    if(gps_data.rmc_sequence != 0U &&
+        gps_data.rmc_sequence != s_gps_runtime_last_checked_sequence)
+    {
+        s_gps_runtime_last_checked_sequence = gps_data.rmc_sequence;
+
+        if(gps_data.rmc_period_ms > 0U)
+        {
+            s_gps_rumtime_period_sum_ms += gps_data.rmc_period_ms;
+
+            if(s_gps_runtime_period_sample_count <
+                GPS_RUNTIME_RATE_VERITY_SAMPLES)
+            {
+                s_gps_runtime_period_sample_count++;
+            }
+
+            if(s_gps_runtime_period_sample_count >= 
+                GPS_RUNTIME_RATE_VERITY_SAMPLES)
+            {
+                const uint32_t average_period_ms =
+                    s_gps_rumtime_period_sum_ms /
+                    GPS_RUNTIME_RATE_VERITY_SAMPLES;
+
+                const bool rate_is_10hz =
+                    average_period_ms >= GPS_RUNTIME_RATE_AVG_MIN_MS &&
+                    average_period_ms <= GPS_RUNTIME_RATE_AVG_MAX_MS;
+
+                s_gps_rumtime_period_sum_ms = 0U;
+                s_gps_runtime_period_sample_count = 0U;
+
+                if(rate_is_10hz)
+                {
+                    s_gps_runtime_rate_verifed = 1U;
+                    s_gps_runtime_bad_window_count = 0U;
+                    s_gps_runtime_reconfigure_requested = 0U;
+                }
+                else if(s_gps_runtime_rate_verifed != 0U)
+                {
+                    if(s_gps_runtime_bad_window_count <
+                        GPS_RUNTIME_BAD_WINDOWS_BEFORE_RETRY)
+                    {
+                        s_gps_runtime_bad_window_count++;
+                    }
+
+                    /* 已验证后要求连续两个异常窗口，避免偶发漏帧触发重配 */
+                    if(s_gps_runtime_bad_window_count >=
+                        GPS_RUNTIME_BAD_WINDOWS_BEFORE_RETRY)
+                    {
+                        s_gps_runtime_rate_verifed = 0U;
+                        s_gps_runtime_reconfigure_requested = 1U;
+                    }
+                }
+                else
+                {
+                    s_gps_runtime_reconfigure_requested = 1U;
+                }
+            }
+        }
+    }
+
+    if(s_gps_runtime_rate_verifed != 0U &&
+        gps_data.rmc_last_update_ms != 0U &&
+        (uint32_t)(now_ms - gps_data.rmc_last_update_ms) >
+            GPS_RUNTIME_RMC_LOSS_TIMEOUT_MS)
+    {
+        s_gps_runtime_rate_verifed = 0U;
+        s_gps_runtime_reconfigure_requested = 1U;
+    }
+
+    if(s_gps_runtime_rate_verifed == 0U &&
+        s_gps_runtime_reconfigure_requested == 0U &&
+        (uint32_t)(now_ms - s_gps_runtime_verify_started_ms) >=
+            GPS_RUNTIME_RATE_VERIFY_TIMEOUT_MS)
+    {
+        s_gps_runtime_reconfigure_requested = 1U;
+    }
+
+    if(!allow_reconfigure ||
+        s_gps_runtime_reconfigure_requested == 0U ||
+        (uint32_t)(now_ms - s_gps_runtime_last_config_attempt_ms) <
+            GPS_RUNTIME_RETRY_MIN_INTERVAL_MS)
+    {
+        return;
+    }
+
+    /* 飞行中调用方传false，因此UART/DMA重配置只会发生在Disarmed。 */
+    s_gps_runtime_last_config_attempt_ms = now_ms;
+    (void)GPS_ConfigureRuntime();
+    GPS_ResetRumtimeRateVerification(now_ms);
 }
 
 /**

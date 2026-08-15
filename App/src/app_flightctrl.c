@@ -36,7 +36,7 @@
 #define VELOCITY_HOLD_CONTROL_ENABLE 1U
 #define POSITION_HOLD_CONTROL_ENABLE 1U
 
-#define HORIZONTAL_MODE_RC_CHANNEL 8U     // SC: CRSF CH9 -> channels[8]
+#define HORIZONTAL_MODE_RC_CHANNEL 8U // SC: CRSF CH9 -> channels[8]
 #define HORIZONTAL_MODE_SC_MIDDLE_MIN 700U
 #define HORIZONTAL_MODE_SC_MIDDLE_MAX 1300U
 #define HORIZONTAL_MODE_SC_HIGH_MIN 1600U
@@ -48,6 +48,7 @@
 #define HORIZONTAL_MODE_ENTRY_POSITION_ACCEPT_STREAK 3U
 #define HORIZONTAL_MODE_BLEND_TIME_S 0.50f
 
+#define POSITION_BRAKE_GPS_VELOCITY_DISAGREEMENT_MAX_MPS 0.30f
 #define HORIZONTAL_BIAS_STATIONARY_TIME_S 1.0f
 #define HORIZONTAL_BIAS_GYRO_MAX_DPS 3.0f
 #define HORIZONTAL_BIAS_ACCEL_NORM_MIN_G 0.85f
@@ -60,6 +61,7 @@
 
 #define HORIZONTAL_PILOT_INPUT_MAX_DEG 30.0f
 #define HORIZONTAL_PILOT_DEADZONE_DEG 2.0f
+#define HORIZONTAL_PILOT_EXPO 0.50f
 
 /* RMC course是True North基准，当前Mag Yaw是Magnetic North基准。
  * 东偏为正：True heading = Magnetic heading + declination
@@ -89,7 +91,7 @@ typedef enum
 static PID_t pid_yaw;
 
 static FlightControl_t fc = {0};
-static RCChannelData_t s_rc_last = {0};     // 非阻塞读取RCChannelMailbox的本地缓存
+static RCChannelData_t s_rc_last = {0}; // 非阻塞读取RCChannelMailbox的本地缓存
 
 static NavState_t s_nav_last = {0};
 static uint8_t s_velocity_hold_requested;
@@ -177,7 +179,7 @@ static void FlightControl_Reset(void)
 
 /**
  * @brief   只重建PID微分项的采样基准
- * 
+ *
  * @note    用于控制周期异常后的恢复。保留Integral和上一帧Output，
  *          避免一次调度抖动导致整个控制器状态被清空。
  *          first_update使下一次PID_Update先对齐last_measurement，
@@ -194,10 +196,10 @@ static void PID_ResetDerivativeOnly(PID_t *pid)
 static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float dt)
 {
     NavState_t nav;
-    if(osMessageQueueGet(NavStateMailboxHandle, &nav, NULL, 0U) == osOK)
+    if (osMessageQueueGet(NavStateMailboxHandle, &nav, NULL, 0U) == osOK)
         s_nav_last = nav;
-    
-    if(!YawEstimator_IsInitialized())
+
+    if (!YawEstimator_IsInitialized())
     {
         HorizontalEstimator_Reset();
         return;
@@ -231,9 +233,9 @@ static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float 
         (gps_speed < HORIZONTAL_BIAS_GPS_SPEED_MAX_MPS) &&
         imu_stationary;
 
-    if(disarmed_bias_candidate && dt >= 0.0005f && dt <= 0.0050f)
+    if (disarmed_bias_candidate && dt >= 0.0005f && dt <= 0.0050f)
     {
-        if(s_disarmed_accel_bias_stationary_time_s <
+        if (s_disarmed_accel_bias_stationary_time_s <
             HORIZONTAL_BIAS_STATIONARY_TIME_S)
         {
             s_disarmed_accel_bias_stationary_time_s += dt;
@@ -285,7 +287,8 @@ static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float 
         (s_nav_last.gps_velocity_valid != 0U) &&
         (s_nav_last.gps_velocity_control_ready != 0U) &&
         (s_nav_last.gps_position_velocity_valid != 0U) &&
-        (gps_velocity_candidate_disagreement_mps <= 0.30f);
+        (gps_velocity_candidate_disagreement_mps <= 
+            POSITION_BRAKE_GPS_VELOCITY_DISAGREEMENT_MAX_MPS);
 
     if (flight_accel_bias_context_valid)
     {
@@ -315,7 +318,7 @@ static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float 
     const bool allow_estimator_state_reacquire =
         (s_horizontal_mode_active == HORIZONTAL_MODE_MANUAL);
 
-    if(s_nav_last.rmc_sequence != horizontal_estimator.last_gps_sequence)
+    if (s_nav_last.rmc_sequence != horizontal_estimator.last_gps_sequence)
     {
         (void)HorizontalEstimator_CorrectGps(
             s_nav_last.gps_velocity_n_mps,
@@ -328,22 +331,22 @@ static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float 
             allow_estimator_state_reacquire);
     }
 
-    if(s_nav_last.gps_position_control_ready == 0U)
+    if (s_nav_last.gps_position_control_ready == 0U)
     {
         /* Position质量失效后清除局部参考系;恢复时从当前坐标重新建立,
          * 避免拿长时间失锁前的局部状态吸收一次巨大innovation. */
-        if(horizontal_estimator.position_initialized)
+        if (horizontal_estimator.position_initialized)
             HorizontalEstimator_ResetPosition();
     }
-    else if(!horizontal_estimator.position_initialized)
+    else if (!horizontal_estimator.position_initialized)
     {
         (void)HorizontalEstimator_SetPositionReference(
             s_nav_last.gps_lat,
             s_nav_last.gps_lon,
             s_nav_last.rmc_sequence);
     }
-    else if(s_nav_last.rmc_sequence != 
-            horizontal_estimator.last_position_sequence)
+    else if (s_nav_last.rmc_sequence !=
+             horizontal_estimator.last_position_sequence)
     {
         (void)HorizontalEstimator_CorrectPosition(
             s_nav_last.gps_lat,
@@ -360,10 +363,10 @@ static FlightHorizontalMode_t FlightControl_GetRequestedHorizontalMode(void)
 {
     const uint16_t sc = s_rc_last.channels[HORIZONTAL_MODE_RC_CHANNEL];
 
-    if(sc >= HORIZONTAL_MODE_SC_HIGH_MIN)
+    if (sc >= HORIZONTAL_MODE_SC_HIGH_MIN)
         return HORIZONTAL_MODE_POSITION_HOLD;
 
-    if(sc >= HORIZONTAL_MODE_SC_MIDDLE_MIN &&
+    if (sc >= HORIZONTAL_MODE_SC_MIDDLE_MIN &&
         sc <= HORIZONTAL_MODE_SC_MIDDLE_MAX)
     {
         return HORIZONTAL_MODE_VELOCITY_HOLD;
@@ -402,7 +405,7 @@ static void FlightControl_ExitHorizontalMode(void)
 
 static bool FlightControl_HorizontalVelocityEntryConsistent(void)
 {
-    if(!horizontal_estimator.initialized ||
+    if (!horizontal_estimator.initialized ||
         !horizontal_estimator.last_gps_accepted ||
         s_nav_last.gps_velocity_valid == 0U)
     {
@@ -415,7 +418,7 @@ static bool FlightControl_HorizontalVelocityEntryConsistent(void)
         s_nav_last.gps_velocity_e_mps *
             s_nav_last.gps_velocity_e_mps);
 
-    if(!(rmc_speed_mps >= 0.0f && rmc_speed_mps <= 30.0f))
+    if (!(rmc_speed_mps >= 0.0f && rmc_speed_mps <= 30.0f))
         return false;
 
     const bool rmc_course_usable =
@@ -425,9 +428,9 @@ static bool FlightControl_HorizontalVelocityEntryConsistent(void)
     const float observed_velocity_e_mps =
         rmc_course_usable ? s_nav_last.gps_velocity_e_mps : 0.0f;
 
-    const float error_e_mps =
-        observed_velocity_n_mps - horizontal_estimator.velocity_n_mps;
     const float error_n_mps =
+        observed_velocity_n_mps - horizontal_estimator.velocity_n_mps;
+    const float error_e_mps =
         observed_velocity_e_mps - horizontal_estimator.velocity_e_mps;
     const float error_mps = sqrtf(
         error_n_mps * error_n_mps +
@@ -440,7 +443,7 @@ static bool FlightControl_HorizontalVelocityEntryConsistent(void)
 
 static bool FlightControl_HorizontalPositionEntryConsistent(void)
 {
-    if(!horizontal_estimator.position_initialized ||
+    if (!horizontal_estimator.position_initialized ||
         !horizontal_estimator.last_position_accepted ||
         horizontal_estimator.last_position_rejected)
     {
@@ -463,20 +466,20 @@ static bool FlightControl_HorizontalPositionEntryConsistent(void)
 
 /**
  * @brief   尝试进入指定水平辅助模式
- * 
+ *
  * @note    从Manual进入时清空Velocity Controller，避免带入旧控制状态；
  *          Velocity Hold与Position Hold直接切换时保留Velocity Integral，
  *          实现平滑切换并保留已建立的静态抗风补偿。
  */
 static bool FlightControl_TryEnterHorizontalMode(FlightHorizontalMode_t requested, bool estimator_healthy)
 {
-    if(requested == HORIZONTAL_MODE_MANUAL)
+    if (requested == HORIZONTAL_MODE_MANUAL)
         return false;
-    
-    if((requested == HORIZONTAL_MODE_VELOCITY_HOLD &&
-        VELOCITY_HOLD_CONTROL_ENABLE == 0U) ||
+
+    if ((requested == HORIZONTAL_MODE_VELOCITY_HOLD &&
+         VELOCITY_HOLD_CONTROL_ENABLE == 0U) ||
         (requested == HORIZONTAL_MODE_POSITION_HOLD &&
-        POSITION_HOLD_CONTROL_ENABLE == 0U))
+         POSITION_HOLD_CONTROL_ENABLE == 0U))
     {
         return false;
     }
@@ -485,17 +488,17 @@ static bool FlightControl_TryEnterHorizontalMode(FlightHorizontalMode_t requeste
         (s_nav_last.gps_velocity_control_ready != 0U) &&
         estimator_healthy &&
         (horizontal_estimator.gps_accept_streak >=
-        HORIZONTAL_MODE_ENTRY_GPS_ACCEPT_STREAK) &&
+         HORIZONTAL_MODE_ENTRY_GPS_ACCEPT_STREAK) &&
         FlightControl_HorizontalVelocityEntryConsistent() &&
         fc.throttle >= HORIZONTAL_MODE_ENTRY_MIN_THROTTLE;
 
-    if(!common_entry_ready)
+    if (!common_entry_ready)
         return false;
 
     const bool entering_from_manual =
         (s_horizontal_mode_active == HORIZONTAL_MODE_MANUAL);
 
-    if(entering_from_manual)
+    if (entering_from_manual)
     {
         s_pilot_velocity_cmd_n_mps =
             horizontal_estimator.velocity_n_mps;
@@ -504,14 +507,14 @@ static bool FlightControl_TryEnterHorizontalMode(FlightHorizontalMode_t requeste
         s_horizontal_control_blend = 0.0f;
     }
 
-    if(requested == HORIZONTAL_MODE_VELOCITY_HOLD)
+    if (requested == HORIZONTAL_MODE_VELOCITY_HOLD)
     {
         /*
          * 从Manual进入时必须清除旧Velocity状态。
          * 从Position切换过来时保留Integral及上一帧输出，
          * 防止已经建立的抗风补偿突然消失。
          */
-        if(entering_from_manual)
+        if (entering_from_manual)
             VelocityController_Reset();
 
         PositionController_Reset();
@@ -519,9 +522,9 @@ static bool FlightControl_TryEnterHorizontalMode(FlightHorizontalMode_t requeste
         return true;
     }
 
-    if(requested == HORIZONTAL_MODE_POSITION_HOLD)
+    if (requested == HORIZONTAL_MODE_POSITION_HOLD)
     {
-        if(s_nav_last.gps_position_control_ready == 0U ||
+        if (s_nav_last.gps_position_control_ready == 0U ||
             !horizontal_estimator.position_initialized ||
             !horizontal_estimator.last_position_accepted ||
             horizontal_estimator.last_position_rejected ||
@@ -532,16 +535,16 @@ static bool FlightControl_TryEnterHorizontalMode(FlightHorizontalMode_t requeste
             return false;
         }
 
-        if(!PositionController_Enter(&horizontal_estimator))
+        if (!PositionController_Enter(&horizontal_estimator))
         {
             return false;
         }
 
         /*
          * Manual进入Position时从干净状态开始；
-         * Velocity转Position时保留内层速度环的抗风补偿、 
+         * Velocity转Position时保留内层速度环的抗风补偿、
          */
-        if(entering_from_manual)
+        if (entering_from_manual)
             VelocityController_Reset();
         else
             VelocityController_ResetIntegral();
@@ -553,17 +556,26 @@ static bool FlightControl_TryEnterHorizontalMode(FlightHorizontalMode_t requeste
     return false;
 }
 
+/**
+ * @brief   对水平摇杆应用Deadzone和expo，改善Position Hold精细修正手感。
+ * @note    expo只压低中杆附近灵敏度；满杆仍保持原速度上限。
+ */
 static float FlightControl_ApplyHorizontalPliotDeadzone(float input_deg)
 {
     const float magnitude = fabsf(input_deg);
 
-    if(magnitude <= HORIZONTAL_PILOT_DEADZONE_DEG)
+    if (magnitude <= HORIZONTAL_PILOT_DEADZONE_DEG)
         return 0.0f;
 
-    const float scaled =
+    float normalized =
         (magnitude - HORIZONTAL_PILOT_DEADZONE_DEG) /
-        (HORIZONTAL_PILOT_INPUT_MAX_DEG - HORIZONTAL_PILOT_DEADZONE_DEG) *
-        HORIZONTAL_PILOT_INPUT_MAX_DEG;
+        (HORIZONTAL_PILOT_INPUT_MAX_DEG - HORIZONTAL_PILOT_DEADZONE_DEG);
+    normalized = fminf(normalized, 1.0f);
+
+    const float curved =
+        (1.0f - HORIZONTAL_PILOT_EXPO) * normalized +
+        HORIZONTAL_PILOT_EXPO * normalized * normalized * normalized;
+    const float scaled = curved * HORIZONTAL_PILOT_INPUT_MAX_DEG;
 
     return (input_deg < 0.0f) ? -scaled : scaled;
 }
@@ -596,7 +608,7 @@ static void FlightControl_GetPilotVelocityNe(float max_speed_mps,
 
 /**
  * @brief   限制Pilot Velocity command的二维变化率。
- * 
+ *
  * @note    这里只整形飞手输入，不限制Position/Velocity Controller的反馈
  *          Acceleration，因此风扰反馈仍可立即使用完整控制权限。
  */
@@ -606,7 +618,7 @@ static void FlightControl_UpdatePilotVelocityCommand(float target_n_mps,
                                                      float *command_n_mps,
                                                      float *command_e_mps)
 {
-    if(command_n_mps == NULL || command_e_mps == NULL)
+    if (command_n_mps == NULL || command_e_mps == NULL)
         return;
 
     const float delta_n_mps = target_n_mps - *command_n_mps;
@@ -616,8 +628,8 @@ static void FlightControl_UpdatePilotVelocityCommand(float target_n_mps,
         delta_e_mps * delta_e_mps);
     const float max_step_mps =
         HORIZONTAL_PILOT_ACCEL_LIMIT_MPS2 * dt;
-    
-    if(delta_mps > max_step_mps && delta_mps > 0.0001f)
+
+    if (delta_mps > max_step_mps && delta_mps > 0.0001f)
     {
         const float scale = max_step_mps / delta_mps;
         *command_n_mps += delta_n_mps * scale;
@@ -643,24 +655,24 @@ static void FlightControl_UpdateHorizontalMode(float dt)
         HorizontalEstimator_IsHealthy(HAL_GetTick());
 
     // 只有明确观察到SC低档后，才允许下一次辅助模式切入
-    if(requested == HORIZONTAL_MODE_MANUAL)
+    if (requested == HORIZONTAL_MODE_MANUAL)
     {
         s_horizontal_manual_seen = 1U;
 
-        if(s_horizontal_mode_active != HORIZONTAL_MODE_MANUAL)
+        if (s_horizontal_mode_active != HORIZONTAL_MODE_MANUAL)
             FlightControl_ExitHorizontalMode();
 
         FlightControl_RefreshHorizontalModeFlags(requested);
         return;
     }
 
-    if(s_horizontal_mode_active != HORIZONTAL_MODE_MANUAL)
+    if (s_horizontal_mode_active != HORIZONTAL_MODE_MANUAL)
     {
         bool maintain_ready =
             estimator_healthy &&
             fc.throttle >= HORIZONTAL_MODE_ENTRY_MIN_THROTTLE;
 
-        if(s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD)
+        if (s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD)
         {
             maintain_ready =
                 maintain_ready &&
@@ -671,7 +683,7 @@ static void FlightControl_UpdateHorizontalMode(float dt)
                 (horizontal_estimator.last_position_rejected == 0U);
         }
 
-        if(!maintain_ready)
+        if (!maintain_ready)
         {
             // GPS、Estimator或油门条件失效：
             // 退出后必须先回SC低档，禁止自动恢复接管。
@@ -681,14 +693,14 @@ static void FlightControl_UpdateHorizontalMode(float dt)
             return;
         }
 
-        if(requested != s_horizontal_mode_active)
+        if (requested != s_horizontal_mode_active)
         {
-            /* 
+            /*
              * SC从低档拨向高档时可能短暂经过中档。
              * 允许Velocity和Position直接切换，避免中档先接管后
              * 又把高档判定为非法跨档
              */
-            if(!FlightControl_TryEnterHorizontalMode(requested, estimator_healthy))
+            if (!FlightControl_TryEnterHorizontalMode(requested, estimator_healthy))
             {
                 FlightControl_ExitHorizontalMode();
                 s_horizontal_manual_seen = 0U;
@@ -701,7 +713,7 @@ static void FlightControl_UpdateHorizontalMode(float dt)
     {
         /* 从Manual进入辅助模式仍要求：
          * 先明确观察到SC低档，再出现新的辅助档切换沿。 */
-        if(!request_changed || !s_horizontal_manual_seen)
+        if (!request_changed || !s_horizontal_manual_seen)
         {
             FlightControl_RefreshHorizontalModeFlags(requested);
             return;
@@ -710,7 +722,7 @@ static void FlightControl_UpdateHorizontalMode(float dt)
         // 一次切入沿只允许尝试一次；失败后也必须回低档重试
         s_horizontal_manual_seen = 0U;
 
-        if(!FlightControl_TryEnterHorizontalMode(requested, estimator_healthy))
+        if (!FlightControl_TryEnterHorizontalMode(requested, estimator_healthy))
         {
             FlightControl_RefreshHorizontalModeFlags(requested);
             return;
@@ -724,9 +736,7 @@ static void FlightControl_UpdateHorizontalMode(float dt)
     float pilot_velocity_target_e_mps;
 
     const float pilot_speed_limit_mps =
-        (s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) ?
-        POSITION_HOLD_PILOT_SPEED_MPS :
-        VELOCITY_HOLD_MAX_SPEED_MPS;
+        (s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) ? POSITION_HOLD_PILOT_SPEED_MPS : VELOCITY_HOLD_MAX_SPEED_MPS;
 
     FlightControl_GetPilotVelocityNe(
         pilot_speed_limit_mps,
@@ -741,13 +751,50 @@ static void FlightControl_UpdateHorizontalMode(float dt)
         &s_pilot_velocity_cmd_n_mps,
         &s_pilot_velocity_cmd_e_mps);
 
-    if(s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD)
+    const float brake_velocity_disagreement_n_mps =
+        s_nav_last.rmc_velocity_n_mps -
+        s_nav_last.gps_position_velocity_n_mps;
+    const float brake_velocity_disagreement_e_mps =
+        s_nav_last.rmc_velocity_e_mps -
+        s_nav_last.gps_position_velocity_e_mps;
+    const float brake_velocity_disagreement_mps = sqrtf(
+        brake_velocity_disagreement_n_mps *
+            brake_velocity_disagreement_n_mps +
+        brake_velocity_disagreement_e_mps *
+            brake_velocity_disagreement_e_mps);
+
+    const float brake_rmc_speed_mps = sqrtf(
+        s_nav_last.rmc_velocity_n_mps *
+            s_nav_last.rmc_velocity_n_mps +
+        s_nav_last.rmc_velocity_e_mps *
+            s_nav_last.rmc_velocity_e_mps);
+
+    const float brake_position_window_speed_mps = sqrtf(
+        s_nav_last.gps_position_velocity_n_mps *
+            s_nav_last.gps_position_velocity_n_mps +
+        s_nav_last.gps_position_velocity_e_mps *
+            s_nav_last.gps_position_velocity_e_mps);
+
+    const float brake_observed_speed_mps =
+        (brake_rmc_speed_mps > brake_position_window_speed_mps)
+            ? brake_rmc_speed_mps
+            : brake_position_window_speed_mps;
+
+    const bool brake_velocity_observations_consistent =
+        (s_nav_last.gps_velocity_valid != 0U) &&
+        (s_nav_last.gps_position_velocity_valid != 0U) &&
+        (brake_velocity_disagreement_mps <=
+         POSITION_BRAKE_GPS_VELOCITY_DISAGREEMENT_MAX_MPS);
+
+    if (s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD)
     {
-        if(!PositionController_Update(
-            &horizontal_estimator,
-            s_pilot_velocity_cmd_n_mps,
-            s_pilot_velocity_cmd_e_mps,
-            dt))
+        if (!PositionController_Update(
+                &horizontal_estimator,
+                s_pilot_velocity_cmd_n_mps,
+                s_pilot_velocity_cmd_e_mps,
+                brake_velocity_observations_consistent,
+                brake_observed_speed_mps,
+                dt))
         {
             FlightControl_ExitHorizontalMode();
             s_horizontal_manual_seen = 0U;
@@ -766,15 +813,10 @@ static void FlightControl_UpdateHorizontalMode(float dt)
         s_velocity_target_e_mps = s_pilot_velocity_cmd_e_mps;
     }
 
-    /*
-     * Position Hold只有HOLD阶段允许从Velocity error学习抗风Integral。
-     * MOVING/BRAKING仍使用已有I输出和D阻尼，但不把飞手机动写I。
-     * Velocity Hold的控制目标本身就是Velocity，因此保持I学习。
-     */
     const bool allow_velocity_integral_learning =
         (s_horizontal_mode_active == HORIZONTAL_MODE_VELOCITY_HOLD) ||
         ((s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) &&
-         (position_controller.phase == POSITION_CONTROL_PHASE_HOLD));
+         (position_controller.integral_learning_allowed != 0U));
 
     VelocityController_Update(
         s_velocity_target_n_mps,
@@ -789,11 +831,11 @@ static void FlightControl_UpdateHorizontalMode(float dt)
 
     FlightControl_RefreshHorizontalModeFlags(requested);
 
-    if(s_horizontal_control_blend < 1.0f)
+    if (s_horizontal_control_blend < 1.0f)
     {
         s_horizontal_control_blend +=
             dt / HORIZONTAL_MODE_BLEND_TIME_S;
-        if(s_horizontal_control_blend > 1.0f)
+        if (s_horizontal_control_blend > 1.0f)
             s_horizontal_control_blend = 1.0f;
     }
 
@@ -802,7 +844,6 @@ static void FlightControl_UpdateHorizontalMode(float dt)
     fc.pitch_target += s_horizontal_control_blend *
                        (velocity_controller.pitch_target_deg - fc.pitch_target);
 }
-
 
 /**
  * @brief   根据当前RC、姿态和Gyro数据运行串级控制器
@@ -816,23 +857,23 @@ static void FlightControl_Update(float dt, float gx, float gy, float gz)
     fc.throttle = Map_Throttle(s_rc_last.channels[2]);
 
     // ARM不要启动姿态控制电机
-    if(g_arm_state != ARM_STATE_ARMED)
+    if (g_arm_state != ARM_STATE_ARMED)
     {
         fc.airmode_active = 0U;
         FlightControl_Reset();
         return;
     }
-    
+
     /* 测试阶段的Airmode状态机。
-     * 
+     *
      * 未启用时，油门达到激活阈值才开始运行姿态PID。
      * 已启用后，油门降到退出阈值以下便停止PID并清空控制状态。
-     * 
+     *
      * 注意：这是近地调试策略。正式飞行时，空中低油门仍需姿态控制，
      * 后续应由airborne/landed状态决定是否退出Airmode。*/
-    if(!fc.airmode_active)
+    if (!fc.airmode_active)
     {
-        if(fc.throttle < AIRMODE_ACTIVATION_THROTTLE)
+        if (fc.throttle < AIRMODE_ACTIVATION_THROTTLE)
         {
             FlightControl_Reset();
             return;
@@ -840,7 +881,7 @@ static void FlightControl_Update(float dt, float gx, float gy, float gz)
 
         fc.airmode_active = 1U;
     }
-    else if(fc.throttle < AIRMODE_DEACTIVATION_THROTTLE)
+    else if (fc.throttle < AIRMODE_DEACTIVATION_THROTTLE)
     {
         fc.airmode_active = 0U;
         FlightControl_Reset();
@@ -850,18 +891,18 @@ static void FlightControl_Update(float dt, float gx, float gy, float gz)
     FlightControl_UpdateHorizontalMode(dt);
 
     // 默认自动偏航(遥控SA键未按下)
-    if(s_rc_last.channels[5]>1500)
+    if (s_rc_last.channels[5] > 1500)
     {
         // 手动偏航
         fc.yaw_mode = 1U;
         fc.yaw_rate_target = Map_Yaw(s_rc_last.channels[3]);
-        if(fabsf(fc.yaw_rate_target) < 5.0f)
+        if (fabsf(fc.yaw_rate_target) < 5.0f)
             fc.yaw_rate_target = 0.0f;
     }
     else
     {
         // 自动偏航；
-        if(fc.yaw_mode != 0U)
+        if (fc.yaw_mode != 0U)
         {
             /* 手动Yaw退出时以当前航向为新锁定点，并清除两级Yaw控制器的
              * 历史状态，避免模式切换把旧积分或微分带入 */
@@ -903,9 +944,9 @@ static int16_t BB_ToInt16(float value, float scale)
 {
     float scaled = value * scale;
 
-    if(scaled > 32767.0f)
+    if (scaled > 32767.0f)
         return 32767;
-    if(scaled < -32768.0f)
+    if (scaled < -32768.0f)
         return -32768;
 
     return (int16_t)scaled;
@@ -915,9 +956,9 @@ static uint16_t BB_ToUInt16(float value, float scale)
 {
     const float scaled = value * scale;
 
-    if(scaled <= 0.0f)
+    if (scaled <= 0.0f)
         return 0U;
-    if(scaled >= 65535.0f)
+    if (scaled >= 65535.0f)
         return 65535U;
 
     return (uint16_t)(scaled + 0.5f);
@@ -966,12 +1007,12 @@ void App_FlightCtrl_Task(void *argument)
         else
             osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_IMU_HEALTH_OK);
 
-        if(ImuCalibration_IsReady())
+        if (ImuCalibration_IsReady())
             osEventFlagsSet(SystemReadyEventGroupHandle, SYSREADY_BIT_GYRO_CALIB_OK);
         else
             osEventFlagsClear(SystemReadyEventGroupHandle, SYSREADY_BIT_GYRO_CALIB_OK);
 
-        if(imu_result == IMU_UPDATE_CALIBRATION)
+        if (imu_result == IMU_UPDATE_CALIBRATION)
         {
             /* 校准期间禁止任何控制输出；移动机体只会延长等待时间。 */
             FlightControl_Reset();
@@ -979,7 +1020,7 @@ void App_FlightCtrl_Task(void *argument)
             continue;
         }
 
-        if(imu_result == IMU_UPDATE_TIMING_ANOMALY)
+        if (imu_result == IMU_UPDATE_TIMING_ANOMALY)
         {
             PID_ResetDerivativeOnly(&angle_controller.roll);
             PID_ResetDerivativeOnly(&angle_controller.pitch);
@@ -990,12 +1031,12 @@ void App_FlightCtrl_Task(void *argument)
 
             PID_ResetDerivativeOnly(&pid_yaw);
 
-            if(timing_anomaly_streak < 0xFFU)
+            if (timing_anomaly_streak < 0xFFU)
                 timing_anomaly_streak++;
 
             /* 本帧不做姿态积分和PID，保持上一帧电机输出；
              * 连续异常说明控制调度已经不可信 */
-            if(timing_anomaly_streak >= 3U)
+            if (timing_anomaly_streak >= 3U)
             {
                 Arm_ForceDisarm();
                 BSP_DSHOT_Send(0U, 0U, 0U, 0U);
@@ -1004,27 +1045,27 @@ void App_FlightCtrl_Task(void *argument)
             continue;
         }
 
-        if(imu_result == IMU_UPDATE_STANDBY_ONLY)
+        if (imu_result == IMU_UPDATE_STANDBY_ONLY)
         {
             /* 待命-IMU刷新不能再次运行姿态解算和PID
              * 保持上一帧电机输出，等待active IMU的新数据 */
             continue;
         }
 
-        if(imu_result == IMU_UPDATE_ACTIVE_FRAME)
+        if (imu_result == IMU_UPDATE_ACTIVE_FRAME)
         {
             /* 只有新的active帧且dt正常，才解除连续时序异常计数 */
             timing_anomaly_streak = 0U;
         }
 
-        if((imu_result  == IMU_UPDATE_TIMEOUT) || (imu_result == IMU_UPDATE_DUAL_FAULT))
+        if ((imu_result == IMU_UPDATE_TIMEOUT) || (imu_result == IMU_UPDATE_DUAL_FAULT))
         {
-            if((imu_result == IMU_UPDATE_DUAL_FAULT) || g_imu_health.dual_fault)
+            if ((imu_result == IMU_UPDATE_DUAL_FAULT) || g_imu_health.dual_fault)
             {
                 Arm_ForceDisarm();
             }
 
-            if(g_arm_state != ARM_STATE_ARMED)
+            if (g_arm_state != ARM_STATE_ARMED)
 
             {
                 BSP_DSHOT_Send(0U, 0U, 0U, 0U);
@@ -1044,7 +1085,7 @@ void App_FlightCtrl_Task(void *argument)
                         &attitude.accel_roll,
                         &attitude.accel_pitch);
 
-        if(!attitude_initialized)
+        if (!attitude_initialized)
         {
             /* 首帧以崇礼方向初始化，避免从0度缓慢收敛造成虚假误差。 */
             attitude.roll = attitude.accel_roll;
@@ -1081,12 +1122,12 @@ void App_FlightCtrl_Task(void *argument)
                 g_arm_state == ARM_STATE_DISARMED);
         }
 
-        if(YawEstimator_IsInitialized())
+        if (YawEstimator_IsInitialized())
         {
             attitude.yaw = YawEstimator_GetYawRad();
             fc.yaw_meas = attitude.yaw * 57.29578f;
 
-            if(g_arm_state == ARM_STATE_DISARMED)
+            if (g_arm_state == ARM_STATE_DISARMED)
             {
                 fc.yaw_target = fc.yaw_meas;
             }
@@ -1103,10 +1144,10 @@ void App_FlightCtrl_Task(void *argument)
 
         /* Arm_Update可能因为人工Motor Kill、RC lost、低压、
          * 双IMU故障或倾倒检测而撤销解锁
-         * 
+         *
          * 一旦撤销，本周期立即发送DShot 0，
          * 不再进入PID、Mixer和正常电机输出 */
-        if(g_arm_state != ARM_STATE_ARMED)
+        if (g_arm_state != ARM_STATE_ARMED)
         {
             FlightControl_Reset();
             BSP_DSHOT_Send(0U, 0U, 0U, 0U);
@@ -1122,11 +1163,11 @@ void App_FlightCtrl_Task(void *argument)
          */
         uint16_t current_limit = g_power_health.current_limit_permille;
 
-        if(current_limit < 600U || current_limit > 1000U)
+        if (current_limit < 600U || current_limit > 1000U)
             current_limit = 1000U;
 
         /* 只缩放油门，Mixer仍能优先维持姿态控制
-        * 使用uint32_t完成乘法，避免uint16_t乘法结果溢出 */
+         * 使用uint32_t完成乘法，避免uint16_t乘法结果溢出 */
         uint16_t limited_throttle = (uint16_t)(((uint32_t)fc.throttle * current_limit) / 1000U);
 
         Mixer(fc.roll_cmd, fc.pitch_cmd, fc.yaw_cmd, limited_throttle, fc.airmode_active, &m1, &m2, &m3, &m4);
@@ -1137,17 +1178,17 @@ void App_FlightCtrl_Task(void *argument)
         BSP_DSHOT_Send((uint16_t)(m1 + 48U), (uint16_t)(m2 + 48U),
                        (uint16_t)(m3 + 48U), (uint16_t)(m4 + 48U));
 #endif
-        /**
-         * 控制环标称800Hz，按4分频记录约200Hz。
-         * 日志字段全部取自本控制周期，避免跨Task读取fc产生数据撕裂。
-         * BB_LogControl只负责packed记录到RAM缓冲，不在FlightCtrl中执行SD I/O。
-         */
-        #define BB_LOG_DIVIDER 4U
+/**
+ * 控制环标称800Hz，按4分频记录约200Hz。
+ * 日志字段全部取自本控制周期，避免跨Task读取fc产生数据撕裂。
+ * BB_LogControl只负责packed记录到RAM缓冲，不在FlightCtrl中执行SD I/O。
+ */
+#define BB_LOG_DIVIDER 4U
         static uint8_t s_bb_log_divider = 0U;
 
         s_bb_log_divider++;
 
-        if(s_bb_log_divider >= BB_LOG_DIVIDER)
+        if (s_bb_log_divider >= BB_LOG_DIVIDER)
         {
             s_bb_log_divider = 0U;
 
@@ -1166,10 +1207,10 @@ void App_FlightCtrl_Task(void *argument)
             float trim_roll_rad;
             float trim_pitch_rad;
 
-            if(LevelTrim_GetOffsets(
-                        (IcmInstance_t)g_imu_health.active_imu_sel,
-                        &trim_roll_rad,
-                        &trim_pitch_rad))
+            if (LevelTrim_GetOffsets(
+                    (IcmInstance_t)g_imu_health.active_imu_sel,
+                    &trim_roll_rad,
+                    &trim_pitch_rad))
             {
                 log.level_trim_offset_cdeg[0] =
                     BB_ToInt16(trim_roll_rad, 5729.578f);
@@ -1185,7 +1226,7 @@ void App_FlightCtrl_Task(void *argument)
             log.mag_field_ratio_permille = BB_ToUInt16(yaw_diag.mag_field_ratio, 1000.0f);
             log.mag_reject_reason = yaw_diag.mag_reject_reason;
 
-            if(yaw_diag.initialized)
+            if (yaw_diag.initialized)
             {
                 log.mag_yaw_cdeg = BB_ToInt16(
                     yaw_diag.mag_yaw_rad, 5729.578f);
@@ -1196,7 +1237,7 @@ void App_FlightCtrl_Task(void *argument)
                 log.flags |= (1U << 5);
             }
 
-            if(yaw_diag.mag_accepted)
+            if (yaw_diag.mag_accepted)
                 log.flags |= (1U << 4);
 
             log.rate_target_ddps[0] = BB_ToInt16(fc.roll_rate_target, 10.0f);
@@ -1228,13 +1269,13 @@ void App_FlightCtrl_Task(void *argument)
             log.current_dA = BB_ToInt16(g_power_health.current_filtered_a, 10.0f);
             log.current_limit_permille = g_power_health.current_limit_permille;
 
-            if(fc.airmode_active)
+            if (fc.airmode_active)
                 log.flags |= (1U << 0);
 
-            if(g_power_health.current_limiting)
+            if (g_power_health.current_limiting)
                 log.flags |= (1U << 1);
 
-            if(fc.yaw_mode != 0U)
+            if (fc.yaw_mode != 0U)
                 log.flags |= (1U << 2);
 
             log.throttle = fc.throttle;
@@ -1365,7 +1406,7 @@ void App_FlightCtrl_Task(void *argument)
         }
 
         /* 测试阶段：循环体到这里结束，下一轮由osEventFlagsWait本身阻塞节流，
-            * 不需要额外osDelay */
+         * 不需要额外osDelay */
     }
 }
 

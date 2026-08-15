@@ -35,6 +35,7 @@ typedef struct
 
 void GPS_Init(void);
 void GPS_Poll(void);
+void GPS_RuntimeService(bool allow_reconfigure);
 bool GPS_SetHome(void);
 void GPS_CopyDataTo(GPS_Data_t *out);
 void GPS_CopyHomeTo(GPS_Home_t *out);

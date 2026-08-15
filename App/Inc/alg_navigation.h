@@ -13,8 +13,8 @@
 typedef struct
 {
     /* 统一水平状态：Velocity与Position均由Estimator持有。 */
-    float velocity_n_mps;       // 北向估计速度 (m/s)
-    float velocity_e_mps;       // 东向估计速度
+    float velocity_n_mps; // 北向估计速度 (m/s)
+    float velocity_e_mps; // 东向估计速度
     float position_n_m;
     float position_e_m;
 
@@ -22,24 +22,24 @@ typedef struct
     float gps_position_n_m;
     float gps_position_e_m;
 
-    float accel_n_mps2;         // 消除零偏后的北向加速度 (m/s^2)
-    float accel_e_mps2;         // 消除零偏后的东向加速度
-    float accel_lpf_n_mps2;     // 低通滤波后的北向原始加速度 (m/s^2)
-    float accel_lpf_e_mps2;     // 低通滤波后的东向原始加速度
+    float accel_n_mps2;     // 消除零偏后的北向加速度 (m/s^2)
+    float accel_e_mps2;     // 消除零偏后的东向加速度
+    float accel_lpf_n_mps2; // 低通滤波后的北向原始加速度 (m/s^2)
+    float accel_lpf_e_mps2; // 低通滤波后的东向原始加速度
 
     /*
      * Accel bias的持久状态保存在机体系，避免飞行器改变Yaw后，
      * 同一个机体固定参数被错误解释成另一组N/E偏差。
      */
-    float accel_bias_forward_mps2;  // 机头向前方向的水平加速度偏差
-    float accel_bias_right_mps2;    // 机头向右方向的水平加速度偏差
+    float accel_bias_forward_mps2; // 机头向前方向的水平加速度偏差
+    float accel_bias_right_mps2;   // 机头向右方向的水平加速度偏差
 
     /*
      * 下面两项不是独立状态，而是上述机体系bias在当前Yaw下的N/E投影。
      * 保留他们用于Estimator输出和现有Blackbox日志。
-    */
-    float accel_bias_n_mps2;        // 北向加速度计零偏估计值 (m/s^2)
-    float accel_bias_e_mps2;        // 东向加速度计零偏估计值
+     */
+    float accel_bias_n_mps2; // 北向加速度计零偏估计值 (m/s^2)
+    float accel_bias_e_mps2; // 东向加速度计零偏估计值
 
     /* GPS Position局部坐标参考系。 */
     int32_t position_reference_lat_e7;
@@ -52,10 +52,10 @@ typedef struct
     float position_velocity_correction_n_mps;
     float position_velocity_correction_e_mps;
 
-    uint32_t last_gps_sequence;     // 最后一个处理的GPS样本序列号，防重复数据
-    uint32_t last_gps_tick_ms;      // 最后一个被接收的GPS样本时间戳 (ms)
-    uint32_t gps_accept_count;      // 成功融合的GPS样本总计数
-    uint32_t gps_reject_count;      // 因新息过大或非法而拒绝的GPS样本计数
+    uint32_t last_gps_sequence; // 最后一个处理的GPS样本序列号，防重复数据
+    uint32_t last_gps_tick_ms;  // 最后一个被接收的GPS样本时间戳 (ms)
+    uint32_t gps_accept_count;  // 成功融合的GPS样本总计数
+    uint32_t gps_reject_count;  // 因新息过大或非法而拒绝的GPS样本计数
 
     uint8_t gps_accept_streak;
 
@@ -66,9 +66,10 @@ typedef struct
 
     uint8_t position_accept_streak;
 
-    uint8_t initialized;        // 估计器是否已完成首帧GPS速度的初始对齐
-    uint8_t gps_healthy;        // 当前GPS速度更新是否正常且未超时
-    uint8_t last_gps_accepted;  // 上一帧到达的GPS样本是否被滤波器接受
+    uint8_t initialized;       // 估计器是否已完成首帧GPS速度的初始对齐
+    uint8_t gps_healthy;       // 当前GPS速度更新是否正常且未超时
+    uint8_t last_gps_accepted; // 上一帧到达的GPS样本是否被滤波器接受
+    uint8_t last_rmc_vector_used;
 
     uint8_t position_initialized;
     uint8_t last_position_accepted;
@@ -78,32 +79,32 @@ typedef struct
 
 typedef struct
 {
-    float kp;       // 速度环比例增益
-    float ki;       // 速度环积分增益
-    float kd;       // 实测水平Acceleration阻尼增益
-    float arw_gain;     // 饱和Acceleration error折算为Velocity error的增益
-    uint8_t integral_enabled;   // 1=本周期允许由Velocity error学习Integral
+    float kp;                 // 速度环比例增益
+    float ki;                 // 速度环积分增益
+    float kd;                 // 实测水平Acceleration阻尼增益
+    float arw_gain;           // 饱和Acceleration error折算为Velocity error的增益
+    uint8_t integral_enabled; // 1=本周期允许由Velocity error学习Integral
 
     /* 未经限幅的PID请求，用于诊断和Anti-windup */
     float accel_requested_n_mps2;
     float accel_requested_e_mps2;
 
     /* Integral直接保存其对水平加速度指令的贡献，单位m/s^2 */
-    float integral_accel_n_mps2;    // 北向加速度积分项累积量
-    float integral_accel_e_mps2;    // 东向加速度积分项累积量
+    float integral_accel_n_mps2; // 北向加速度积分项累积量
+    float integral_accel_e_mps2; // 东向加速度积分项累积量
 
-    float accel_target_n_mps2;      // 输出的北向目标加速度 (m/s^2)
-    float accel_target_e_mps2;      // 输出的东向目标加速度
+    float accel_target_n_mps2; // 输出的北向目标加速度 (m/s^2)
+    float accel_target_e_mps2; // 输出的东向目标加速度
 
     float p_accel_n_mps2;
     float p_accel_e_mps2;
     float d_accel_n_mps2;
     float d_accel_e_mps2;
 
-    float roll_target_deg;          // 转换出的目标横滚角指令 (deg)
-    float pitch_target_deg;         // 转换出的目标俯仰角指令
+    float roll_target_deg;  // 转换出的目标横滚角指令 (deg)
+    float pitch_target_deg; // 转换出的目标俯仰角指令
 
-    uint8_t output_limited;         // 1=Acceleration/tilt权限已饱和
+    uint8_t output_limited; // 1=Acceleration/tilt权限已饱和
 } VelocityController_t;
 
 typedef enum
@@ -116,23 +117,26 @@ typedef enum
 
 typedef struct
 {
-    float kp;       // 位置外环比例增益
+    float kp; // 位置外环比例增益
 
-    float target_n_m;       // 期望控制前往的北向目标位置 (m)
-    float target_e_m;       // 期望控制前往的东向目标位置
-    float error_n_m;        // 当前北向位置偏差 (m)
-    float error_e_m;        // 当前东向位置偏差
+    float target_n_m; // 期望控制前往的北向目标位置 (m)
+    float target_e_m; // 期望控制前往的东向目标位置
+    float error_n_m;  // 当前北向位置偏差 (m)
+    float error_e_m;  // 当前东向位置偏差
 
-    float velocity_target_n_mps;    // 前馈与位置修正叠加输出的北向目标速度 (m/s)
-    float velocity_target_e_mps;    // 前馈与位置修正叠加输出的东向目标速度
+    float velocity_target_n_mps; // 前馈与位置修正叠加输出的北向目标速度 (m/s)
+    float velocity_target_e_mps; // 前馈与位置修正叠加输出的东向目标速度
 
-    float brake_stable_time_s;      // BRAKING阶段连续满足低速条件的累计时间
-    float brake_elapsed_time_s;     // 本轮BRAKING已经持续的总时间
+    float brake_elapsed_time_s; // 本轮BRAKING已经持续的总时间
+    uint32_t brake_last_gps_sequence;
+    uint8_t brake_low_speed_sample_count;
+    float integral_learning_candidate_time_s;
+
+    uint8_t integral_learning_allowed;
+
     PositionControlPhase_t phase;
-
-    uint8_t initialized;    // 位置控制器是否已建立有效的局部参考系
+    uint8_t initialized; // 位置控制器是否已建立有效的局部参考系
 } PositionController_t;
-
 
 extern HorizontalEstimator_t horizontal_estimator;
 extern VelocityController_t velocity_controller;
@@ -163,11 +167,11 @@ void HorizontalEstimator_Predict(float ax_g,
 
 /**
  * @brief   消费一条新的RMC ground-speed/course样本。
- * 
- * @note    有效的低速零值仍刷新GPS health，但因其不包含可信运动方向，
- *          不会直接把二维Velocity状态拉向零。达到方向可信门限的RMC
- *          才作为直接Velocity observation参与矫正。
- * 
+ *
+ * @note    有效的低速RMC仍刷新GPS health,并使用ground speed大小约束
+ *          Estimator Velocity模长;由于course不可信,不使用N/E方向.
+ *          低速方向信息由GPS Position beta修正提供.
+ *
  * @param   gps_velocity_n_mps  GPS北向速度
  * @param   gps_velocity_e_mps  GPS东向速度
  * @param   gps_sequence        GPS样本序号
@@ -176,7 +180,7 @@ void HorizontalEstimator_Predict(float ax_g,
  * @param   sample_valid        当前GPS速度样本是否有效
  * @param   allow_accel_bias_correction 是否允许利用GPS innovation
  *                                      慢速修正飞行中的Accel bias
- * 
+ *
  * @return  true=样本接收；false=样本质量不合格或innovation过大。
  */
 bool HorizontalEstimator_CorrectGps(float gps_velocity_n_mps,
@@ -238,14 +242,14 @@ void VelocityController_Reset(void);
 
 /**
  * @brief   仅清除Velocity Controller的Integral
- * 
+ *
  * @note    保留当前目标加速度和Roll/Pitch Slew状态，避免人工接管时姿态目标突跳到零。
  */
 void VelocityController_ResetIntegral(void);
 
 /**
  * @brief   运行N/E 速度 PID，输出体系Roll/Pitch目标角。
- * 
+ *
  * @param   velocity_target_n_mps   N向Velocity target
  * @param   velocity_target_e_mps   E向Velocity target
  * @param   velocity_meas_n_mps     N向估计Velocity
@@ -253,7 +257,8 @@ void VelocityController_ResetIntegral(void);
  * @param   accel_meas_n_mps2       N向实测水平Acceleration
  * @param   accel_meas_e_mps2       E向实测水平Acceleration
  * @param   yaw_rad                 导航Yaw
- * @param   allow_integral_learning true=允许Velocity error建立抗风Integral
+ * @param   allow_integral_learning true=允许Velocity error建立抗风Integral;
+ *                                  false=禁止建立新Integral，仅允许反向误差和ARW卸载已有Integral
  * @param   dt                      控制周期
  */
 void VelocityController_Update(float velocity_target_n_mps,
@@ -284,29 +289,25 @@ bool PositionController_Enter(const HorizontalEstimator_t *horizontal_state);
 
 /**
  * @brief   运行Position模式三阶段状态机并生成Velocity target。
- * 
- * @note    本函数只读取Estimator，不再修正任何Position或Velocity测量状态。
- * 
- * @param[in]   latitude_e7     当前GPS纬度(° * 1e7)。
- * @param[in]   longitude_e7    当前GPS经度。
- * @param[in]   gps_sequence    RMC新样本序列号。
- * @param[in,out]   horizontal_state    水平状态估计器；
- *                                      GPS Position innovation被接收时，
- *                                      会同时小幅修正其Velocity状态。
- * @param[in]   pilot_velocity_n_mps    驾驶员北向速度前馈
- * @param[in]   pilot_velocity_e_mps    驾驶员东向速度前馈
- * @param[in]   dt  控制周期
- * 
- * @retval  true=本轮输出有效；
+ *
+ * @note    BRAKING只在收到连续,有效且相互一致的新GPS观测后才捕获HOLD锚点;
+ *          不再通过超时强制捕获仍在移动中的位置
+ *
+ * @param   horizontal_state    水平状态估计器
+ * @param   pilot_velocity_n_mps    驾驶员北向Velocity前馈
+ * @param   pilot_velocity_e_mps    驾驶员东向Velocity前馈
+ * @param   brake_velocity_observation_consistent
+ *          true=本轮RMC Velocity与Position-window Velocity均有效且差值可接受
+ * @param   brake_observed_speed_mps    RMC与Position-window两者中较大的Velocity模长
+ * @param   dt  控制周期
+ *
  * @retval  false=状态未就绪、dt异常或位置越界。
- * 
- * @note    MOVING阶段只跟踪驾驶员Velocity，不累计Position target；
- *          摇杆回中后先进入BRAKING，确认水平速度稳定后捕获当前位置；
- *          HOLD阶段才启用Position P外环。
  */
 bool PositionController_Update(HorizontalEstimator_t *horizontal_state,
                                float pilot_velocity_n_mps,
                                float pilot_velocity_e_mps,
+                               bool brake_velocity_observations_consistent,
+                               float brake_observed_speed_mps,
                                float dt);
 
 #endif

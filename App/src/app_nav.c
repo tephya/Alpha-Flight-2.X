@@ -34,10 +34,10 @@ extern osMessageQueueId_t IndicatorEventQueueHandle;
 #define GPS_EARTH_RADIUS_M 6378137.0f
 #define GPS_DEG_E7_TO_RAD 1.745329252e-9f
 
-#define GPS_POSITION_VELOCITY_HISTORY_SIZE 4U
-#define GPS_POSITION_VELOCITY_MIN_SAMPLES 4U
-#define GPS_POSITION_VELOCITY_MIN_WINDOW_MS 450U
-#define GPS_POSITION_VELOCITY_MAX_WINDOW_MS 900U
+#define GPS_POSITION_VELOCITY_HISTORY_SIZE 8U
+#define GPS_POSITION_VELOCITY_MIN_SAMPLES 3U
+#define GPS_POSITION_VELOCITY_MIN_WINDOW_MS 400U
+#define GPS_POSITION_VELOCITY_MAX_WINDOW_MS 700U
 #define GPS_POSITION_VELOCITY_MAX_SPEED_MPS 3.0f
 
 typedef struct
@@ -71,7 +71,7 @@ static void Nav_InitGpsPositionVelocity(void)
 }
 
 /**
- * @brief   使用最近约1秒的GPS Position样本的线性回归斜率估算N/E速度。
+ * @brief   使用最近约0.5秒的GPS Position样本的线性回归斜率估算N/E速度。
  * @note    只在收到新的RMC sequence时更新；重复发布的NavState不会重复入窗。
  */
 static void Nav_UpdateGpsPositionVelocity(const GPS_Data_t *gps,
@@ -117,16 +117,35 @@ static void Nav_UpdateGpsPositionVelocity(const GPS_Data_t *gps,
     if(s_gps_position_history_count < GPS_POSITION_VELOCITY_MIN_SAMPLES)
         return;
 
-    const NavGpsPositionSample_t *oldest = &s_gps_position_history[0];
+    const uint8_t newest_index = s_gps_position_history_count - 1U;
     const NavGpsPositionSample_t *newest =
-        &s_gps_position_history[s_gps_position_history_count - 1U];
+        &s_gps_position_history[newest_index];
 
-    const uint32_t window_ms = newest->tick_ms - oldest->tick_ms;
-    if(window_ms < GPS_POSITION_VELOCITY_MIN_WINDOW_MS ||
-        window_ms > GPS_POSITION_VELOCITY_MAX_WINDOW_MS)
+    /* 从最老样本向后寻找第一个有效起点，得到当前历史中跨度最大的
+     * 400ms~700ms子窗口。这样10Hz和5Hz都不会因固定帧数而失效。 */
+    uint8_t oldest_index = s_gps_position_history_count;
+    for (uint8_t i = 0U; 
+        (uint8_t)(s_gps_position_history_count - i) >= GPS_POSITION_VELOCITY_MIN_SAMPLES; 
+        i++)
     {
-        return;
+        const uint32_t window_ms = newest->tick_ms - s_gps_position_history[i].tick_ms;
+
+        if(window_ms > GPS_POSITION_VELOCITY_MAX_WINDOW_MS)
+            continue;
+
+        if(window_ms < GPS_POSITION_VELOCITY_MIN_WINDOW_MS)
+            break;
+
+        oldest_index = i;
+        break;
     }
+
+    if(oldest_index >= s_gps_position_history_count)
+        return;
+    
+    const NavGpsPositionSample_t *oldest = &s_gps_position_history[oldest_index];
+    const uint8_t regression_sample_count =
+        s_gps_position_history_count - oldest_index;
 
     const float reference_lat_rad =
         0.5f * ((float)oldest->latitude_e7 + (float)newest->latitude_e7) * GPS_DEG_E7_TO_RAD;
@@ -137,7 +156,7 @@ static void Nav_UpdateGpsPositionVelocity(const GPS_Data_t *gps,
     float sum_n = 0.0f;
     float sum_e = 0.0f;
 
-    for (uint8_t i = 0U; i < s_gps_position_history_count; i++)
+    for (uint8_t i = oldest_index; i < s_gps_position_history_count; i++)
     {
         const NavGpsPositionSample_t *p = &s_gps_position_history[i];
         const float t_s =
@@ -152,7 +171,7 @@ static void Nav_UpdateGpsPositionVelocity(const GPS_Data_t *gps,
         sum_e += e_m;
     }
 
-    const float inv_count = 1.0f / (float)s_gps_position_history_count;
+    const float inv_count = 1.0f / (float)regression_sample_count;
     const float mean_t = sum_t * inv_count;
     const float mean_n = sum_n * inv_count;
     const float mean_e = sum_e * inv_count;
@@ -161,7 +180,7 @@ static void Nav_UpdateGpsPositionVelocity(const GPS_Data_t *gps,
     float covariance_n = 0.0f;
     float covariance_e = 0.0f;
 
-    for (uint8_t i = 0U; i < s_gps_position_history_count; i++)
+    for (uint8_t i = oldest_index; i < s_gps_position_history_count; i++)
     {
         const NavGpsPositionSample_t *p = &s_gps_position_history[i];
         const float t_s =
@@ -296,6 +315,7 @@ void App_Nav_Task(void *argument)
     for (;;)
     {
         GPS_Poll(); // 消费DMA缓冲区，解析NMEA
+        GPS_RuntimeService(g_arm_state == ARM_STATE_DISARMED);
 
         uint8_t pre_home_valid = s_home_valid;  // 记录本轮循环开始前的值，两处更新点后统一判断跳变
 
