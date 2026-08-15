@@ -813,6 +813,13 @@ static void FlightControl_UpdateHorizontalMode(float dt)
         s_velocity_target_e_mps = s_pilot_velocity_cmd_e_mps;
     }
 
+    if((s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) &&
+        ((position_controller.phase == POSITION_CONTROL_PHASE_MOVING) ||
+        (position_controller.phase == POSITION_CONTROL_PHASE_BRAKING)))
+    {
+        VelocityController_DecayIntegral(dt);
+    }
+
     const bool allow_velocity_integral_learning =
         (s_horizontal_mode_active == HORIZONTAL_MODE_VELOCITY_HOLD) ||
         ((s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) &&

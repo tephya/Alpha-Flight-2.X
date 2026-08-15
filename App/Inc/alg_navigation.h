@@ -130,8 +130,10 @@ typedef struct
     float brake_elapsed_time_s; // 本轮BRAKING已经持续的总时间
     uint32_t brake_last_gps_sequence;
     uint8_t brake_low_speed_sample_count;
-    float integral_learning_candidate_time_s;
 
+    uint32_t integral_learning_last_gps_sequence;
+    uint32_t integral_learning_candidate_start_tick_ms;
+    uint8_t integral_learning_valid_sample_count;
     uint8_t integral_learning_allowed;
 
     PositionControlPhase_t phase;
@@ -246,6 +248,16 @@ void VelocityController_Reset(void);
  * @note    保留当前目标加速度和Roll/Pitch Slew状态，避免人工接管时姿态目标突跳到零。
  */
 void VelocityController_ResetIntegral(void);
+
+/**
+ * @brief   平滑衰减 Velocity Controller 已有积分。
+ * 
+ * @note    用于 Position Hold 的 MOVING/BRAKING 阶段。它只改变Integral，
+ *          不重置当前 Acceleration target；后续输出仍受原有 Slew limiter 约束。
+ * 
+ * @param   dt  控制周期(s)
+ */
+void VelocityController_DecayIntegral(float dt);
 
 /**
  * @brief   运行N/E 速度 PID，输出体系Roll/Pitch目标角。

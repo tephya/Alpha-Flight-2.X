@@ -89,6 +89,7 @@
 
 #define VELOCITY_ARW_GAIN (2.0f / VELOCITY_KP)
 #define VELOCITY_INTEGRAL_UNLOAD_GAIN 2.0f
+#define VELOCITY_INTEGRAL_MOTION_DECAY_TIME_S 0.75f
 
 /* -------------------------------------------------------------------------
  * Position Controller
@@ -111,7 +112,8 @@
 #define POSITION_HOLD_INTEGRAL_POSITION_ERROR_MAX_M 0.20f
 #define POSITION_HOLD_INTEGRAL_EST_SPEED_MAX_MPS 0.60f
 #define POSITION_HOLD_INTEGRAL_OBSERVED_SPEED_MAX_MPS 0.70f
-#define POSITION_HOLD_INTEGRAL_CONFIRM_TIME_S 0.75f
+#define POSITION_HOLD_INTEGRAL_CONFIRM_TIME_MS 750U
+#define POSITION_HOLD_INTEGRAL_MIN_GPS_SAMPLES 4U
 
 #define POSITION_BRAKE_MIN_TIME_S 0.80f
 #define POSITION_BRAKE_CAPTURE_GPS_SAMPLES 5U
@@ -733,6 +735,31 @@ void VelocityController_ResetIntegral(void)
     velocity_controller.integral_accel_e_mps2 = 0.0f;
 }
 
+void VelocityController_DecayIntegral(float dt)
+{
+    if(dt < 0.0005f || dt > 0.0050f)
+        return;
+
+    const float decay_scale = Navigation_Clamp(
+        1.0f - dt / VELOCITY_INTEGRAL_MOTION_DECAY_TIME_S,
+        0.0f,
+        1.0f);
+
+    velocity_controller.integral_accel_n_mps2 *= decay_scale;
+    velocity_controller.integral_accel_e_mps2 *= decay_scale;
+
+    const float integral_magnitude_mps2 = sqrtf(
+        velocity_controller.integral_accel_n_mps2 *
+            velocity_controller.integral_accel_n_mps2 +
+        velocity_controller.integral_accel_e_mps2 *
+            velocity_controller.integral_accel_e_mps2);
+
+    if(integral_magnitude_mps2 < 0.0001f)
+    {
+        VelocityController_ResetIntegral();
+    }
+}
+
 /**
  * @brief 重置控制器积分项及目标输出
  */
@@ -1165,6 +1192,14 @@ bool HorizontalEstimator_CorrectPosition(int32_t latitude_e7,
     return true;
 }
 
+static void PositionController_ResetIntegralLearningGate(uint32_t current_gps_sequence)
+{
+    position_controller.integral_learning_last_gps_sequence = current_gps_sequence;
+    position_controller.integral_learning_candidate_start_tick_ms = 0U;
+    position_controller.integral_learning_valid_sample_count = 0U;
+    position_controller.integral_learning_allowed = 0U;
+}
+
 /**
  * @brief 初始化位置控制器模块及其参数设置
  */
@@ -1192,11 +1227,11 @@ void PositionController_Reset(void)
     position_controller.brake_elapsed_time_s = 0.0f;
     position_controller.brake_last_gps_sequence = 0U;
     position_controller.brake_low_speed_sample_count = 0U;
-    position_controller.integral_learning_candidate_time_s = 0.0f;
-    position_controller.integral_learning_allowed = 0U;
 
     position_controller.phase = POSITION_CONTROL_PHASE_INACTIVE;
     position_controller.initialized = 0U;
+
+    PositionController_ResetIntegralLearningGate(0U);
 }
 
 /**
@@ -1220,6 +1255,7 @@ bool PositionController_Enter(const HorizontalEstimator_t *horizontal_state)
     position_controller.target_e_m = horizontal_state->position_e_m;
     position_controller.brake_last_gps_sequence =
         horizontal_state->last_gps_sequence;
+    PositionController_ResetIntegralLearningGate(horizontal_state->last_gps_sequence);
     position_controller.phase = POSITION_CONTROL_PHASE_BRAKING;
     position_controller.initialized = 1U;
 
@@ -1280,8 +1316,7 @@ bool PositionController_Update(HorizontalEstimator_t *horizontal_state,
         position_controller.brake_last_gps_sequence =
             horizontal_state->last_gps_sequence;
         position_controller.brake_low_speed_sample_count = 0U;
-        position_controller.integral_learning_candidate_time_s = 0.0f;
-        position_controller.integral_learning_allowed = 0U;
+        PositionController_ResetIntegralLearningGate(horizontal_state->last_gps_sequence);
 
         /* MOVING期间目标点随Estimator Position移动；
          * Controller不积累人工机动产生的位置误差。 */
@@ -1302,8 +1337,7 @@ bool PositionController_Update(HorizontalEstimator_t *horizontal_state,
         position_controller.brake_last_gps_sequence =
             horizontal_state->last_gps_sequence;
         position_controller.brake_low_speed_sample_count = 0U;
-        position_controller.integral_learning_candidate_time_s = 0.0f;
-        position_controller.integral_learning_allowed = 0U;
+        PositionController_ResetIntegralLearningGate(horizontal_state->last_gps_sequence);
     }
 
     if (position_controller.phase == POSITION_CONTROL_PHASE_BRAKING)
@@ -1314,7 +1348,7 @@ bool PositionController_Update(HorizontalEstimator_t *horizontal_state,
         position_controller.error_e_m = 0.0f;
         position_controller.velocity_target_n_mps = 0.0f;
         position_controller.velocity_target_e_mps = 0.0f;
-        position_controller.integral_learning_candidate_time_s = 0.0f;
+        position_controller.integral_learning_allowed = 0U;
 
         if(position_controller.brake_elapsed_time_s <
             POSITION_BRAKE_MIN_TIME_S)
@@ -1331,8 +1365,6 @@ bool PositionController_Update(HorizontalEstimator_t *horizontal_state,
         const bool brake_settle_time_ready =
             position_controller.brake_elapsed_time_s >=
             POSITION_BRAKE_MIN_TIME_S;
-
-        position_controller.integral_learning_allowed = 0U;
 
         const bool new_gps_sample =
             horizontal_state->last_gps_sequence !=
@@ -1373,8 +1405,7 @@ bool PositionController_Update(HorizontalEstimator_t *horizontal_state,
                 horizontal_state->position_n_m;
             position_controller.target_e_m =
                 horizontal_state->position_e_m;
-            position_controller.integral_learning_candidate_time_s = 0.0f;
-            position_controller.integral_learning_allowed = 0U;
+            PositionController_ResetIntegralLearningGate(horizontal_state->last_gps_sequence);
         }
 
         return true;
@@ -1394,36 +1425,70 @@ bool PositionController_Update(HorizontalEstimator_t *horizontal_state,
 
     if (error_magnitude > POSITION_MAX_ERROR_M)
     {
-        position_controller.integral_learning_candidate_time_s = 0.0f;
-        position_controller.integral_learning_allowed = 0U;
+        PositionController_ResetIntegralLearningGate(horizontal_state->last_gps_sequence);
         return false;
     }
 
-    const bool integral_observation_valid =
-        brake_velocity_observations_consistent &&
-        estimated_speed_mps <= POSITION_HOLD_INTEGRAL_EST_SPEED_MAX_MPS &&
-        brake_observed_speed_mps <= POSITION_HOLD_INTEGRAL_OBSERVED_SPEED_MAX_MPS;
+    const bool integral_fast_context_valid =
+        error_magnitude <= POSITION_HOLD_INTEGRAL_POSITION_ERROR_MAX_M &&
+        estimated_speed_mps <= POSITION_HOLD_INTEGRAL_EST_SPEED_MAX_MPS;
 
-    if(integral_observation_valid)
+    if(!integral_fast_context_valid)
     {
-        position_controller.integral_learning_candidate_time_s += dt;
-        if(position_controller.integral_learning_candidate_time_s >
-            POSITION_HOLD_INTEGRAL_CONFIRM_TIME_S)
-        {
-            position_controller.integral_learning_candidate_time_s =
-                POSITION_HOLD_INTEGRAL_CONFIRM_TIME_S;
-        }
+        PositionController_ResetIntegralLearningGate(horizontal_state->last_gps_sequence);
     }
     else
     {
-        position_controller.integral_learning_candidate_time_s = 0.0f;
-    }
+        const bool new_gps_sample =
+            horizontal_state->last_gps_sequence !=
+            position_controller.integral_learning_last_gps_sequence;
 
-    position_controller.integral_learning_allowed =
-        position_controller.integral_learning_candidate_time_s >=
-            POSITION_HOLD_INTEGRAL_CONFIRM_TIME_S
-            ? 1U
-            : 0U;
+        if(new_gps_sample)
+        {
+            position_controller.integral_learning_last_gps_sequence =
+                horizontal_state->last_gps_sequence;
+
+            const bool integral_sample_valid =
+                brake_velocity_observations_consistent &&
+                (horizontal_state->last_gps_accepted != 0U) &&
+                (horizontal_state->last_position_accepted != 0U) &&
+                (horizontal_state->last_gps_tick_ms != 0U) &&
+                (brake_observed_speed_mps <=
+                 POSITION_HOLD_INTEGRAL_OBSERVED_SPEED_MAX_MPS);
+
+            if (!integral_sample_valid)
+            {
+                position_controller.integral_learning_candidate_start_tick_ms = 0U;
+                position_controller.integral_learning_valid_sample_count = 0U;
+                position_controller.integral_learning_allowed = 0U;
+            }
+            else
+            {
+                if (position_controller.integral_learning_valid_sample_count == 0U)
+                {
+                    position_controller.integral_learning_candidate_start_tick_ms =
+                        horizontal_state->last_gps_tick_ms;
+                }
+
+                if (position_controller.integral_learning_valid_sample_count < UINT8_MAX)
+                {
+                    position_controller.integral_learning_valid_sample_count++;
+                }
+
+                const uint32_t candidate_elapsed_ms =
+                    horizontal_state->last_gps_tick_ms -
+                    position_controller.integral_learning_candidate_start_tick_ms;
+
+                position_controller.integral_learning_allowed =
+                    (position_controller.integral_learning_valid_sample_count >=
+                     POSITION_HOLD_INTEGRAL_MIN_GPS_SAMPLES) &&
+                            (candidate_elapsed_ms >=
+                             POSITION_HOLD_INTEGRAL_CONFIRM_TIME_MS)
+                        ? 1U
+                        : 0U;
+            }
+        }
+    }
 
     float correction_error_n_m = 0.0f;
     float correction_error_e_m = 0.0f;

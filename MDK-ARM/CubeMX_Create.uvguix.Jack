@@ -3624,9 +3624,9 @@
       </Doc>
       <Doc>
         <Name>..\App\src\app_flightctrl.c</Name>
-        <ColumnNumber>48</ColumnNumber>
+        <ColumnNumber>0</ColumnNumber>
         <TopLine>464</TopLine>
-        <CurrentLine>470</CurrentLine>
+        <CurrentLine>486</CurrentLine>
         <Folding>1</Folding>
         <ContractedFolders></ContractedFolders>
         <PaneID>0</PaneID>
