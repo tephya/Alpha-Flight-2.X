@@ -63,6 +63,10 @@
 #define HORIZONTAL_PILOT_DEADZONE_DEG 2.0f
 #define HORIZONTAL_PILOT_EXPO 0.50f
 
+#define RMC_VECTOR_CONFIRM_REQUIRED_SAMPLES 2U
+#define RMC_VECTOR_CONFIRM_POSITION_SPEED_MIN_MPS 0.10f
+#define RMC_VECTOR_CONFIRM_MAX_DISAGREEMENT_MPS 0.30f
+
 /* RMC course是True North基准，当前Mag Yaw是Magnetic North基准。
  * 东偏为正：True heading = Magnetic heading + declination
  * 第一阶段观测暂用0；正式接管前必须填写测试地点对应值。 */
@@ -112,6 +116,14 @@ static float s_flight_accel_bias_hold_time_s;
 
 static float s_disarmed_accel_bias_stationary_time_s;
 static float s_horizontal_control_blend;
+static uint8_t s_rmc_vector_confirm_count;
+static uint8_t s_rmc_vector_confirmed;
+
+static void FlightControl_ResetRmcVectorConfirmation(void)
+{
+    s_rmc_vector_confirm_count = 0U;
+    s_rmc_vector_confirmed = 0U;
+}
 
 void FlightControl_Init(void)
 {
@@ -132,6 +144,7 @@ void FlightControl_Init(void)
 
     s_disarmed_accel_bias_stationary_time_s = 0.0f;
     s_horizontal_control_blend = 0.0f;
+    FlightControl_ResetRmcVectorConfirmation();
 }
 
 static void FlightControl_Reset(void)
@@ -175,6 +188,7 @@ static void FlightControl_Reset(void)
     s_pilot_velocity_cmd_e_mps = 0.0f;
 
     s_horizontal_control_blend = 0.0f;
+    FlightControl_ResetRmcVectorConfirmation();
 }
 
 /**
@@ -193,6 +207,100 @@ static void PID_ResetDerivativeOnly(PID_t *pid)
     pid->first_update = 1U;
 }
 
+static bool FlightControl_UpdateRmcVectorUseAllowed(bool require_position_confirmation)
+{
+    if(s_nav_last.gps_velocity_valid == 0U)
+    {
+        FlightControl_ResetRmcVectorConfirmation();
+        return false;
+    }
+
+    const float rmc_speed_mps = sqrtf(
+        s_nav_last.rmc_velocity_n_mps *
+            s_nav_last.rmc_velocity_n_mps +
+        s_nav_last.rmc_velocity_e_mps *
+            s_nav_last.rmc_velocity_e_mps);
+
+    if(!(rmc_speed_mps >= 0.0f && rmc_speed_mps <= 30.0f))
+    {
+        FlightControl_ResetRmcVectorConfirmation();
+        return false;
+    }
+
+    if (rmc_speed_mps < NAV_RMC_VECTOR_MIN_SPEED_MPS)
+    {
+        FlightControl_ResetRmcVectorConfirmation();
+        return false;
+    }
+
+    /* Velocity Hold和Manual维持原RMC行为；本轮修复只约束Position Hold。 */
+    if (!require_position_confirmation)
+    {
+        FlightControl_ResetRmcVectorConfirmation();
+        return true;
+    }
+
+    if (s_nav_last.gps_position_velocity_valid == 0U)
+    {
+        FlightControl_ResetRmcVectorConfirmation();
+        return false;
+    }
+
+    const float position_speed_mps = sqrtf(
+        s_nav_last.gps_position_velocity_n_mps *
+            s_nav_last.gps_position_velocity_n_mps +
+        s_nav_last.gps_position_velocity_e_mps *
+            s_nav_last.gps_position_velocity_e_mps);
+
+    if (!(position_speed_mps >=
+          RMC_VECTOR_CONFIRM_POSITION_SPEED_MIN_MPS))
+    {
+        FlightControl_ResetRmcVectorConfirmation();
+        return false;
+    }
+
+    const float disagreement_n_mps =
+        s_nav_last.rmc_velocity_n_mps -
+        s_nav_last.gps_position_velocity_n_mps;
+    const float disagreement_e_mps =
+        s_nav_last.rmc_velocity_e_mps -
+        s_nav_last.gps_position_velocity_e_mps;
+    const float disagreement_mps = sqrtf(
+        disagreement_n_mps * disagreement_n_mps +
+        disagreement_e_mps * disagreement_e_mps);
+
+    const float direction_dot =
+        s_nav_last.rmc_velocity_n_mps *
+            s_nav_last.gps_position_velocity_n_mps +
+        s_nav_last.rmc_velocity_e_mps *
+            s_nav_last.gps_position_velocity_e_mps;
+
+    const bool candidates_consistent =
+        disagreement_mps <=
+            RMC_VECTOR_CONFIRM_MAX_DISAGREEMENT_MPS &&
+        direction_dot > 0.0f;
+
+    if (!candidates_consistent)
+    {
+        FlightControl_ResetRmcVectorConfirmation();
+        return false;
+    }
+    
+    if(s_rmc_vector_confirm_count <
+        RMC_VECTOR_CONFIRM_REQUIRED_SAMPLES)
+    {
+        s_rmc_vector_confirm_count++;
+    }
+
+    if (s_rmc_vector_confirm_count >=
+        RMC_VECTOR_CONFIRM_REQUIRED_SAMPLES)
+    {
+        s_rmc_vector_confirmed = 1U;
+    }
+
+    return s_rmc_vector_confirmed != 0U;
+}
+
 static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float dt)
 {
     NavState_t nav;
@@ -202,6 +310,7 @@ static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float 
     if (!YawEstimator_IsInitialized())
     {
         HorizontalEstimator_Reset();
+        FlightControl_ResetRmcVectorConfirmation();
         return;
     }
 
@@ -320,6 +429,14 @@ static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float 
 
     if (s_nav_last.rmc_sequence != horizontal_estimator.last_gps_sequence)
     {
+        const bool require_rmc_position_confirmation =
+            (s_position_hold_requested != 0U) ||
+            (s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD);
+
+        const bool rmc_vector_use_allowed =
+            FlightControl_UpdateRmcVectorUseAllowed(
+                require_rmc_position_confirmation);
+
         (void)HorizontalEstimator_CorrectGps(
             s_nav_last.gps_velocity_n_mps,
             s_nav_last.gps_velocity_e_mps,
@@ -327,6 +444,7 @@ static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float 
             s_nav_last.rmc_last_update_ms,
             navigation_yaw_rad,
             s_nav_last.gps_velocity_valid != 0U,
+            rmc_vector_use_allowed,
             allow_flight_accel_bias_correction,
             allow_estimator_state_reacquire);
     }
@@ -546,8 +664,6 @@ static bool FlightControl_TryEnterHorizontalMode(FlightHorizontalMode_t requeste
          */
         if (entering_from_manual)
             VelocityController_Reset();
-        else
-            VelocityController_ResetIntegral();
 
         s_horizontal_mode_active = HORIZONTAL_MODE_POSITION_HOLD;
         return true;
@@ -813,17 +929,27 @@ static void FlightControl_UpdateHorizontalMode(float dt)
         s_velocity_target_e_mps = s_pilot_velocity_cmd_e_mps;
     }
 
-    if((s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) &&
-        ((position_controller.phase == POSITION_CONTROL_PHASE_MOVING) ||
-        (position_controller.phase == POSITION_CONTROL_PHASE_BRAKING)))
-    {
-        VelocityController_DecayIntegral(dt);
-    }
+    VelocityIntegralMode_t velocity_integral_mode =
+        VELOCITY_INTEGRAL_MODE_FROZEN;
 
-    const bool allow_velocity_integral_learning =
-        (s_horizontal_mode_active == HORIZONTAL_MODE_VELOCITY_HOLD) ||
-        ((s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) &&
-         (position_controller.integral_learning_allowed != 0U));
+    if(s_horizontal_mode_active == HORIZONTAL_MODE_VELOCITY_HOLD)
+    {
+        velocity_integral_mode = VELOCITY_INTEGRAL_MODE_LEARN;
+    }
+    else if(s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD)
+    {
+        if(position_controller.phase == POSITION_CONTROL_PHASE_HOLD)
+        {
+            velocity_integral_mode =
+                (position_controller.integral_learning_allowed != 0U)
+                    ? VELOCITY_INTEGRAL_MODE_LEARN
+                    : VELOCITY_INTEGRAL_MODE_UNLOAD_ONLY;
+        }
+        else
+        {
+            velocity_integral_mode = VELOCITY_INTEGRAL_MODE_FROZEN;
+        }
+    }
 
     VelocityController_Update(
         s_velocity_target_n_mps,
@@ -833,7 +959,7 @@ static void FlightControl_UpdateHorizontalMode(float dt)
         horizontal_estimator.accel_n_mps2,
         horizontal_estimator.accel_e_mps2,
         yaw_rad,
-        allow_velocity_integral_learning,
+        velocity_integral_mode,
         dt);
 
     FlightControl_RefreshHorizontalModeFlags(requested);

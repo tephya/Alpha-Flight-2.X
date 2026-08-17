@@ -109,6 +109,13 @@ typedef struct
 
 typedef enum
 {
+    VELOCITY_INTEGRAL_MODE_FROZEN = 0,
+    VELOCITY_INTEGRAL_MODE_UNLOAD_ONLY = 1,
+    VELOCITY_INTEGRAL_MODE_LEARN = 2,
+} VelocityIntegralMode_t;
+
+typedef enum
+{
     POSITION_CONTROL_PHASE_INACTIVE = 0,
     POSITION_CONTROL_PHASE_MOVING = 1,
     POSITION_CONTROL_PHASE_BRAKING = 2,
@@ -180,10 +187,14 @@ void HorizontalEstimator_Predict(float ax_g,
  * @param   gps_tick_ms         GPS样本时间戳
  * @param   yaw_rad             当前导航Yaw；用于N/E与机体系bias之间的旋转
  * @param   sample_valid        当前GPS速度样本是否有效
+ * @param   rmc_vector_use_allowed  true=允许使用本帧RMC N/E方向：
+ *                                  false=只使用ground speed大小和健康信息
  * @param   allow_accel_bias_correction 是否允许利用GPS innovation
  *                                      慢速修正飞行中的Accel bias
+ * @param   allow_state_reacquire   是否允许GPS长间隔后重新对齐Estimator状态
  *
- * @return  true=样本接收；false=样本质量不合格或innovation过大。
+ * @return  true=样本被接收并刷新GPS health；
+ *          false=样本非法、过期，或不允许重新捕获时innovation超限。
  */
 bool HorizontalEstimator_CorrectGps(float gps_velocity_n_mps,
                                     float gps_velocity_e_mps,
@@ -191,6 +202,7 @@ bool HorizontalEstimator_CorrectGps(float gps_velocity_n_mps,
                                     uint32_t gps_tick_ms,
                                     float yaw_rad,
                                     bool sample_valid,
+                                    bool rmc_vector_use_allowed,
                                     bool allow_accel_bias_correction,
                                     bool allow_state_reacquire);
 
@@ -250,16 +262,6 @@ void VelocityController_Reset(void);
 void VelocityController_ResetIntegral(void);
 
 /**
- * @brief   平滑衰减 Velocity Controller 已有积分。
- * 
- * @note    用于 Position Hold 的 MOVING/BRAKING 阶段。它只改变Integral，
- *          不重置当前 Acceleration target；后续输出仍受原有 Slew limiter 约束。
- * 
- * @param   dt  控制周期(s)
- */
-void VelocityController_DecayIntegral(float dt);
-
-/**
  * @brief   运行N/E 速度 PID，输出体系Roll/Pitch目标角。
  *
  * @param   velocity_target_n_mps   N向Velocity target
@@ -269,8 +271,7 @@ void VelocityController_DecayIntegral(float dt);
  * @param   accel_meas_n_mps2       N向实测水平Acceleration
  * @param   accel_meas_e_mps2       E向实测水平Acceleration
  * @param   yaw_rad                 导航Yaw
- * @param   allow_integral_learning true=允许Velocity error建立抗风Integral;
- *                                  false=禁止建立新Integral，仅允许反向误差和ARW卸载已有Integral
+ * @param   integral_mode           Integral冻结、仅卸载或正常学习模式
  * @param   dt                      控制周期
  */
 void VelocityController_Update(float velocity_target_n_mps,
@@ -280,7 +281,7 @@ void VelocityController_Update(float velocity_target_n_mps,
                                float accel_meas_n_mps2,
                                float accel_meas_e_mps2,
                                float yaw_rad,
-                               bool allow_integral_learning,
+                               VelocityIntegralMode_t integral_mode,
                                float dt);
 
 /**

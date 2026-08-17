@@ -46,6 +46,15 @@
 #define NAV_GAIN_DT_RATIO_MIN 0.25f
 #define NAV_GAIN_DT_RATIO_MAX 3.00f
 
+/*
+ * GPS样本迟到代表观测带宽降低，不能因此获得更大的单帧状态修改权限。
+ * 实际dt仍用于时效检查和innovation/dt计算。
+ */
+#define NAV_GPS_CORRECTION_AUTHORITY_DT_MAX_S 0.15f
+
+/* GPS Position alpha单帧允许直接移动Estimator Position的最大二维距离。 */
+#define NAV_POSITION_STATE_CORRECTION_LIMIT_M 0.12f
+
 /* GPS Velocity修正。 */
 #define NAV_GPS_CORRECTION_NOMINAL_GAIN 0.35f
 #define NAV_GPS_STATE_CORRECTION_RATE_LIMIT_MPS2 2.00f
@@ -53,13 +62,12 @@
 #define NAV_GPS_REACQUIRE_GAP_MS 1500U
 #define NAV_GPS_TIMEOUT_MS 600U
 #define NAV_ESTIMATED_SPEED_LIMIT_MPS 20.0f
-#define NAV_VELOCITY_DIRECTION_EPSILON_MPS 0.001f
 
 /* -------------------------------------------------------------------------
  * GPS Position alpha-beta修正
  * ------------------------------------------------------------------------- */
 
-#define NAV_POSITION_ALPHA_NOMINAL_GAIN 0.20f
+#define NAV_POSITION_ALPHA_NOMINAL_GAIN 0.10f
 #define NAV_POSITION_BETA_LOW_SPEED_NOMINAL_GAIN 0.06f
 #define NAV_POSITION_BETA_RMC_AIDED_NOMINAL_GAIN 0.02f
 
@@ -67,6 +75,9 @@
 #define NAV_POSITION_SAMPLE_DT_MIN_S 0.05f
 #define NAV_POSITION_SAMPLE_DT_MAX_S 0.60f
 #define NAV_POSITION_SAMPLE_ELAPSED_LIMIT_S 2.0f
+
+/* 低速只约束Velocity模长，方向继续由Position beta提供。 */
+#define NAV_VELOCITY_DIRECTION_EPSILON_MPS 0.001f
 
 /*
  * 原先每个5Hz样本最多修正0.20m/s，
@@ -89,7 +100,6 @@
 
 #define VELOCITY_ARW_GAIN (2.0f / VELOCITY_KP)
 #define VELOCITY_INTEGRAL_UNLOAD_GAIN 2.0f
-#define VELOCITY_INTEGRAL_MOTION_DECAY_TIME_S 0.75f
 
 /* -------------------------------------------------------------------------
  * Position Controller
@@ -109,7 +119,9 @@
 /* BRAKING阶段的HOLD锚点捕获条件。 */
 #define POSITION_BRAKE_CAPTURE_SPEED_MPS 0.15f
 #define POSITION_BRAKE_CAPTURE_OBSERVED_SPEED_MPS 0.25f
-#define POSITION_HOLD_INTEGRAL_POSITION_ERROR_MAX_M 0.20f
+/* 只允许在接近锚点的稳定HOLD中建立静态风扰补偿，
+ * 防止把正在发展的慢漂或Position瞬态储存到Integral。 */
+#define POSITION_HOLD_INTEGRAL_POSITION_ERROR_MAX_M 0.50f
 #define POSITION_HOLD_INTEGRAL_EST_SPEED_MAX_MPS 0.60f
 #define POSITION_HOLD_INTEGRAL_OBSERVED_SPEED_MAX_MPS 0.70f
 #define POSITION_HOLD_INTEGRAL_CONFIRM_TIME_MS 750U
@@ -471,6 +483,7 @@ bool HorizontalEstimator_CorrectGps(float gps_velocity_n_mps,
                                     uint32_t gps_tick_ms,
                                     float yaw_rad,
                                     bool sample_valid,
+                                    bool rmc_vector_use_allowed,
                                     bool allow_accel_bias_correction,
                                     bool allow_state_reacquire)
 {
@@ -500,6 +513,7 @@ bool HorizontalEstimator_CorrectGps(float gps_velocity_n_mps,
     }
 
     const bool rmc_course_usable =
+        rmc_vector_use_allowed &&
         rmc_speed_mps >= NAV_RMC_VECTOR_MIN_SPEED_MPS;
 
     const uint32_t gps_ms = gps_tick_ms - horizontal_estimator.last_gps_tick_ms;
@@ -539,18 +553,20 @@ bool HorizontalEstimator_CorrectGps(float gps_velocity_n_mps,
     else
     {
         const float gps_dt_s = (float)gps_ms * 0.001f;
+
+        const float correction_authority_dt_s =
+            Navigation_Clamp(
+                gps_dt_s,
+                NAV_POSITION_SAMPLE_DT_MIN_S,
+                NAV_GPS_CORRECTION_AUTHORITY_DT_MAX_S);
+
         const float correction_gain = Navigation_GainForSampleDt(
             NAV_GPS_CORRECTION_NOMINAL_GAIN,
-            gps_dt_s);
-
-        const float bounded_gps_dt_s = Navigation_Clamp(
-            gps_dt_s,
-            NAV_POSITION_SAMPLE_DT_MIN_S,
-            NAV_POSITION_SAMPLE_DT_MAX_S);
+            correction_authority_dt_s);
 
         const float max_state_correction_mps =
             NAV_GPS_STATE_CORRECTION_RATE_LIMIT_MPS2 *
-            bounded_gps_dt_s;
+            correction_authority_dt_s;
 
         if(rmc_course_usable)
         {
@@ -614,6 +630,13 @@ bool HorizontalEstimator_CorrectGps(float gps_velocity_n_mps,
         }
         else
         {
+            /*
+             * RMC course在低速时不可信；刚越过低速门限但尚未通过
+             * Position Window一致性确认时，同样不能使用其N/E方向。
+             *
+             * 这里恢复303的模长约束：RMC ground speed可以阻止IMU积分速度
+             * 在低速长期漂大，但不会把不可信的course方向写入Estimator。
+             */
             const float estimated_speed_mps = sqrtf(
                 horizontal_estimator.velocity_n_mps *
                     horizontal_estimator.velocity_n_mps +
@@ -623,6 +646,9 @@ bool HorizontalEstimator_CorrectGps(float gps_velocity_n_mps,
             const bool estimated_speed_valid =
                 estimated_speed_mps >= 0.0f &&
                 estimated_speed_mps <= NAV_ESTIMATED_SPEED_LIMIT_MPS;
+
+            const float directionless_speed_upper_bound_mps =
+                fmaxf(rmc_speed_mps, NAV_RMC_VECTOR_MIN_SPEED_MPS);
 
             if (!estimated_speed_valid)
             {
@@ -638,10 +664,10 @@ bool HorizontalEstimator_CorrectGps(float gps_velocity_n_mps,
                 horizontal_estimator.velocity_e_mps = 0.0f;
                 horizontal_estimator.gps_accept_streak = 1U;
             }
-            else if (estimated_speed_mps > rmc_speed_mps)
+            else if (estimated_speed_mps > directionless_speed_upper_bound_mps)
             {
                 const float speed_excess_mps =
-                    estimated_speed_mps - rmc_speed_mps;
+                    estimated_speed_mps - directionless_speed_upper_bound_mps;
 
                 if (speed_excess_mps > NAV_GPS_INNOVATION_LIMIT_MPS)
                 {
@@ -692,7 +718,6 @@ bool HorizontalEstimator_CorrectGps(float gps_velocity_n_mps,
         }
     }
 
-    /* 低速零值虽然不修改二维Velocity，但仍证明GPS链路及时且样本有效。 */
     horizontal_estimator.last_gps_tick_ms = gps_tick_ms;
     horizontal_estimator.gps_accept_count++;
     horizontal_estimator.gps_healthy = 1U;
@@ -735,31 +760,6 @@ void VelocityController_ResetIntegral(void)
     velocity_controller.integral_accel_e_mps2 = 0.0f;
 }
 
-void VelocityController_DecayIntegral(float dt)
-{
-    if(dt < 0.0005f || dt > 0.0050f)
-        return;
-
-    const float decay_scale = Navigation_Clamp(
-        1.0f - dt / VELOCITY_INTEGRAL_MOTION_DECAY_TIME_S,
-        0.0f,
-        1.0f);
-
-    velocity_controller.integral_accel_n_mps2 *= decay_scale;
-    velocity_controller.integral_accel_e_mps2 *= decay_scale;
-
-    const float integral_magnitude_mps2 = sqrtf(
-        velocity_controller.integral_accel_n_mps2 *
-            velocity_controller.integral_accel_n_mps2 +
-        velocity_controller.integral_accel_e_mps2 *
-            velocity_controller.integral_accel_e_mps2);
-
-    if(integral_magnitude_mps2 < 0.0001f)
-    {
-        VelocityController_ResetIntegral();
-    }
-}
-
 /**
  * @brief 重置控制器积分项及目标输出
  */
@@ -787,9 +787,15 @@ void VelocityController_Reset(void)
 static float VelocityController_UpdateIntegralAxis(float velocity_error_mps,
                                                     float saturation_error_mps2,
                                                     float integral_accel_mps2,
-                                                    bool allow_integral_learning,
+                                                    VelocityIntegralMode_t integral_mode,
                                                     float dt)
 {
+    if(integral_mode == VELOCITY_INTEGRAL_MODE_FROZEN)
+        return integral_accel_mps2;
+
+    const bool allow_integral_learning =
+        integral_mode == VELOCITY_INTEGRAL_MODE_LEARN;
+
     const bool error_unloads_existing_integral =
         ((integral_accel_mps2 > 0.0f) &&
          (velocity_error_mps < 0.0f)) ||
@@ -798,7 +804,7 @@ static float VelocityController_UpdateIntegralAxis(float velocity_error_mps,
 
     float effective_velocity_error_mps = 0.0f;
 
-    if(allow_integral_learning || error_unloads_existing_integral)
+    if(allow_integral_learning)
     {
         effective_velocity_error_mps = velocity_error_mps;
 
@@ -807,6 +813,12 @@ static float VelocityController_UpdateIntegralAxis(float velocity_error_mps,
             effective_velocity_error_mps *=
                 VELOCITY_INTEGRAL_UNLOAD_GAIN;
         }
+    }
+    else if((integral_mode == VELOCITY_INTEGRAL_MODE_UNLOAD_ONLY) &&
+                error_unloads_existing_integral)
+    {
+        effective_velocity_error_mps =
+            velocity_error_mps * VELOCITY_INTEGRAL_UNLOAD_GAIN;
     }
 
     const float candidate_integral_accel_mps2 =
@@ -850,7 +862,7 @@ void VelocityController_Update(float velocity_target_n_mps,
                                float accel_meas_n_mps2,
                                float accel_meas_e_mps2,
                                float yaw_rad,
-                               bool allow_integral_learning,
+                               VelocityIntegralMode_t integral_mode,
                                float dt)
 {
     if (dt < 0.0005f || dt > 0.0050f)
@@ -861,7 +873,7 @@ void VelocityController_Update(float velocity_target_n_mps,
     const float error_e_mps = velocity_target_e_mps - velocity_meas_e_mps;
 
     velocity_controller.integral_enabled =
-        allow_integral_learning ? 1U : 0U;
+        (integral_mode == VELOCITY_INTEGRAL_MODE_LEARN) ? 1U : 0U;
 
     /*
      * D-on-measurement：Velocity的导数就是Acceleration。
@@ -941,14 +953,14 @@ void VelocityController_Update(float velocity_target_n_mps,
             error_n_mps,
             saturation_error_n_mps2,
             velocity_controller.integral_accel_n_mps2,
-            allow_integral_learning,
+            integral_mode,
             dt);
     velocity_controller.integral_accel_e_mps2 =
         VelocityController_UpdateIntegralAxis(
             error_e_mps,
             saturation_error_e_mps2,
             velocity_controller.integral_accel_e_mps2,
-            allow_integral_learning,
+            integral_mode,
             dt);
 
     Navigation_LimitVector(
@@ -1137,14 +1149,34 @@ bool HorizontalEstimator_CorrectPosition(int32_t latitude_e7,
         return true;
     }
 
-    const float position_alpha_gain = Navigation_BetaForSampleDt(
+    const float correction_authority_dt_s =
+        Navigation_Clamp(
+            gps_sample_dt_s,
+            NAV_POSITION_SAMPLE_DT_MIN_S,
+            NAV_GPS_CORRECTION_AUTHORITY_DT_MAX_S);
+
+    const float position_alpha_gain = Navigation_GainForSampleDt(
         NAV_POSITION_ALPHA_NOMINAL_GAIN,
-        gps_sample_dt_s);
+        correction_authority_dt_s);
+
+    float position_correction_n_m =
+        position_alpha_gain * innovation_n_m;
+    float position_correction_e_m =
+        position_alpha_gain * innovation_e_m;
+
+    /*
+     * 限制单个GPS Epoch对Estimator Position的二维修正量，
+     * 防止GPS跳点直接造成Position target和姿态指令突变。
+     */
+    Navigation_LimitVector(
+        &position_correction_n_m,
+        &position_correction_e_m,
+        NAV_POSITION_STATE_CORRECTION_LIMIT_M);
 
     horizontal_estimator.position_n_m +=
-        position_alpha_gain * innovation_n_m;
+        position_correction_n_m;
     horizontal_estimator.position_e_m +=
-        position_alpha_gain * innovation_e_m;
+        position_correction_e_m;
 
     const float position_beta_nominal_gain =
         horizontal_estimator.last_rmc_vector_used
@@ -1153,7 +1185,7 @@ bool HorizontalEstimator_CorrectPosition(int32_t latitude_e7,
 
     const float position_beta_gain = Navigation_BetaForSampleDt(
         position_beta_nominal_gain,
-        gps_sample_dt_s);
+        correction_authority_dt_s);
 
     float velocity_correction_n_mps =
         position_beta_gain * innovation_n_m / gps_sample_dt_s;
@@ -1163,7 +1195,7 @@ bool HorizontalEstimator_CorrectPosition(int32_t latitude_e7,
     Navigation_LimitVector(
         &velocity_correction_n_mps,
         &velocity_correction_e_mps,
-        NAV_POSITION_VELOCITY_CORRECTION_RATE_LIMIT_MPS2 * gps_sample_dt_s);
+        NAV_POSITION_VELOCITY_CORRECTION_RATE_LIMIT_MPS2 * correction_authority_dt_s);
 
     const float velocity_before_n_mps =
         horizontal_estimator.velocity_n_mps;
