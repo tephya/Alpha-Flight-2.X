@@ -1,43 +1,37 @@
 /**
  * @file    alg_attitude.c
- * @brief   Roll/Pitch互补滤波及Mag倾斜补偿Yaw的实现。
+ * @brief   姿态角计算实现。
+ * 
+ * 实现 Roll/Pitch 互补滤波及基于 Mag 的倾斜补偿 Yaw 计算。
  */
 
 #include "alg_attitude.h"
 #include "math.h"
 
-/*
- * Disarmed时，机体应当基本静止，可以较快利用重力方向修正Gyro积分漂移。
- * 0.65s约等于原来在当前控制频率下GYRO_TRUST = 0.998的实际时间常数。 
+/**
+ * Disarmed 状态下的 Accel 校正时间常数。
+ * 机体静止时可较快利用重力观测修正 Gyro 积分漂移。
  */
 #define ATTITUDE_ACCEL_TAU_DISARMED_S 0.65f
 
-/*
- * Armed时可能存在水平线加速度，此时Accel观测不再只包含重力。
- * 增大时间常数，使姿态主要跟随Gyro，同时仍保留缓慢的长期漂移修正。
+/**
+ * Armed 状态下的 Accel 校正时间常数。
+ * 较弱的 Accel 校正可降低线加速度对姿态估计的干扰。
  */
 #define ATTITUDE_ACCEL_TAU_ARMED_S 8.0f
 
 
-/* FlightControl使用的单一全局姿态状态。 */
+/* FlightControl 使用的全局姿态状态。 */
 Attitude_t attitude = {0};
 
 void Attitude_ComputeAccelAngles(const IcmData_t *imu, Attitude_t *att)
 {
-    /**
-     * 静止或低动态情况下，Accel测得的主要是重力方向。
-     * 
-     * Roll由Y/Z轴的重力投影得到；使用atan2f保留象限信息。
-     * 并避免单纯ay/az在az接近0时产生除零问题。
-     */
+    // 根据重力在 Y/Z 轴的投影计算 Roll。
+    // atan2f 可保留象限信息，并避免 az 接近零时的除零问题。
     att->accel_roll = atan2f(imu->ay, imu->az);
 
-    /**
-     * Pitch使用Y/Z平面重力投影的模作为分母。
-     * 这样可降低Roll变化对Pitch观测值的直接影响；
-     * 
-     * pitch = atan2(-ax, sqrtf(ay² + az²))
-     */
+    // 使用 Y/Z 平面重力投影计算 Pitch：
+    // pitch = atan2(-ax, sqrtf(ay^2 + az^2))
     float az = imu->az;
     float ay = imu->ay;
     att->accel_pitch = atan2f(-imu->ax, sqrtf(az * az + ay * ay));
@@ -53,7 +47,7 @@ void Attitude_Update(const IcmData_t *imu,
         return;
     }
 
-    /* ICM驱动输出单位为dps，积分前转换为rad/s */
+    // ICM驱动输出单位为dps，积分前转换为 rad/s。
     const float gyro_x_rad_s = imu->gx * M_PI / 180.0f;
     const float gyro_y_rad_s = imu->gy * M_PI / 180.0f;
 
@@ -61,12 +55,8 @@ void Attitude_Update(const IcmData_t *imu,
                                     ATTITUDE_ACCEL_TAU_ARMED_S :
                                     ATTITUDE_ACCEL_TAU_DISARMED_S;
 
-    /*
-     * 根据实际dt计算互补滤波系数，使滤波时间常数不再依赖控制频率。
-     * 
-     * alpha接近1时更信任Gyro；
-     * (1 - alpha)决定本周期Accel观测的校正权重。
-     */
+    // 根据实际 dt 计算滤波系数，使时间常数不依赖控制频率。
+    // alpha 越接近 1，姿态估计越依赖 Gyro 积分结果。
     const float alpha = expf(-dt / correction_tau_s);
 
     const float roll_gyro = att->roll + gyro_x_rad_s * dt;
@@ -83,23 +73,18 @@ void Attitude_CptYaw(const MagData_t *mag, Attitude_t *att)
     float sin_pitch = sinf(att->pitch);
     float cos_pitch = cosf(att->pitch);
 
-    /**
-     * Mag随飞行器一起倾斜，不能直接使用MX/MY计算Yaw。
-     * 这里按照当前姿态依次消除Roll和Pitch：
-     * 
+    /*
+     * 将倾斜状态下的磁场向量补偿至水平面，
      * Mag_horizontal = Ry(Pitch) · Rx(Roll) · Mag_raw
      */
 
-    /* 第一步：消除Roll，得到Roll补偿后的Y/Z分量 */
+    // 消除Roll，得到Roll补偿后的Y/Z分量。
     float MY_h = cos_roll * mag->MY - sin_roll * mag->MZ;
     float MZ_ = sin_roll * mag->MY + cos_roll * mag->MZ;
 
-    /* 第二步：利用Roll补偿后的Z分量消除Pitch，得到补偿后的X分量 */
+    // 使用 Roll 补偿后的 Z 分量进一步消除 Pitch。
     float MX_h = cos_pitch * mag->MX + sin_pitch * MZ_;
 
-    /**
-     * 使用水平磁场分量计算Yaw。
-     * Y轴取负与当前项目的NED轴向和Yaw正方向约定一致。
-     */
+    // Y 分量取负由当前 NED 坐标系及 Yaw 正方向约定决定。
     att->yaw = atan2f(-MY_h, MX_h);
 }

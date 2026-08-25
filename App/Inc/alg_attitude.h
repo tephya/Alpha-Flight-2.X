@@ -2,8 +2,9 @@
  * @file    alg_attitude.h
  * @brief   姿态角计算接口。
  * 
- * 本模块使用Accel与Gyro的互补滤波计算Roll/Pitch，并提供基于Mag的
- * 倾斜补偿Yaw计算函数。所有姿态角统一使用rad。
+ * 提供使用骆驼椅-加速度计互补滤波的横滚/俯仰（Roll/Pitch）估计，
+ * 以及使用磁力计测量值计算倾斜补偿的偏航角（Yaw）。
+ * 所有姿态角均已弧度为单位。
  */
 
 #ifndef __ALG_ATTITUDE_H
@@ -13,60 +14,58 @@
 #include "bsp_qmc5883.h"
 #include <stdbool.h>
 
-/* 某些C库未定义M_PI，再次提供单精度兜底值 */
+/** 为没有 M_PI 的库提供单精度后备定义。 */
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
 #endif
 
 
 /**
- * @brief   姿态角及Accel中间计算结果。
+ * @brief   姿态状态和基于加速度计推导的观测角。
  */
 typedef struct
 {
-    float roll;     // Roll，单位rad。
-    float pitch;    // Pitch，单位rad。 
-    float yaw;      // Yaw，单位rad，范围通常为[-pi,pi]。
+    float roll;     /**< 横滚角（Roll），单位：弧度。 */
+    float pitch;    /**< 俯仰角（Pitch），单位：弧度。 */
+    float yaw;      /**< 偏航角（Yaw），单位：弧度，通常在 [-pi, pi] 范围内。 */
 
-    float accel_roll;   // 根据重力方向计算的Roll，单位rad。
-    float accel_pitch;  // 根据重力方向计算的Pitch，单位rad。
+    float accel_roll;   /**< 由重力推导出的横滚观测角，单位：弧度。 */
+    float accel_pitch;  /**< 由重力推导出的俯仰观测角，单位：弧度。 */
 } Attitude_t;
 
 /**
- * @brief   FlightControl使用的全局姿态状态。
+ * @brief   飞控 (FlightControl)使用的全局姿态状态。
  * 
- * Roll/Pitch由本模块的互补滤波更新；Yaw当前也可能由YawEstimator更新
+ * 横滚和俯仰由本模块中的互补滤波器进行更新。
+ * 偏航角也可以由 YawEstimator 进行更新。
  */
 extern Attitude_t attitude;
 
 /**
- * @brief   根据Accel测量值计算Roll/Pitch观测角。
+ * @brief   从加速度计测量值计算横滚/俯仰观测角
  * 
- * 计算结果写入att->accel_roll和att->accel_pitch，不直接修改最终的
- * att->roll和att->pitch。该结果主要作为互补滤波的低频修正量。
+ * 计算出的角度会被写入 accel_roll 和 accel_pitch，
+ * 并被互补滤波器用作低频校正项。
  * 
- * @param[in]   imu 当前IMU数据，Accel单位为g
- * @param[in,out] att 姿态状态，写入Accel观测角。
+ * @param[in]       imu 当前IMU数据；加速度值以 g 为单位。
+ * @param[in,out]   att 接收加速度推导角的姿态状态。
  * 
- * @note    飞行器存在明显线加速度时，Accel测得的不再只有重力，
- *          此时计算出的姿态角会暂时包含运动加速度误差。
- * @pre     imu和att必须为有效指针。
+ * @note    线性加速度会引入暂时的姿态观测误差，
+ *          因为此时加速度计的测量值不再仅代表重力。
  */
 void Attitude_ComputeAccelAngles(const IcmData_t *imu, Attitude_t *att);
 
 /**
- * @brief   执行一次Roll/Pitch互补滤波更新。
+ * @brief   使用互补滤波更新横滚/俯仰角。
  * 
- * Gyro积分提供短期动态响应，Accel观测角用于抑制长期积分漂移。
- * 本函数只更新att->roll和att->pitch，不更新Yaw。
+ * 陀螺仪积分提供短期动态响应，而加速度计观测值则用来抑制长期的积分漂移。偏航角（Yaw）不会被修改。
  * 
- * @param[in]   imu 当前IMU数据，Gyro单位为dps。
- * @param[in,out] att 姿态状态。
- * @param[in]   dt 更新周期，单位s。
- * @param[in]   use_weak_accel_correction true: 弱Accel校正，用于Armed状态；
- *                                        false: 正常Accel校正，用于Disarmed状态。
- * 
- * @pre     imu和att必须为有效指针，dt必须为有效正数。
+ * @param[in]       imu 当前IMU数据；陀螺仪值以 dps（度/秒）为单位。
+ * @param[in,out]   att 需要更新的姿态状态。
+ * @param[in]       dt 更新周期，单位：秒。
+ * @param[in]       use_weak_accel_correction
+ *                      为true时：在解锁（Armed）状态下使用较弱的加速度计校正； 
+ *                      为false时：在锁定（Disarmed）状态下使用常规校正。
  */
 void Attitude_Update(const IcmData_t *imu,
                      Attitude_t *att,
@@ -74,16 +73,17 @@ void Attitude_Update(const IcmData_t *imu,
                      bool use_weak_accel_correction);
 
 /**
- * @brief   根据Mag数据计算经过Roll/Pitch倾斜补偿的Yaw。
+ * @brief   从磁力计测量值计算倾斜补偿后的偏航角（Yaw）。
  * 
- * 计算结果直接写入att->yaw，输出范围为[-pi,pi]。
+ * 使用当前的横滚/俯仰估计值，将磁场向量投影到水平面上。结果将直接写入 yaw。
  * 
- * @param[in]   mag 已完成单位转换及NED轴向对齐的Mag数据。
- * @param[in,out] att 当前姿态状态；读取Roll/Pitch并写入Yaw。
+ * @param[in]       mag 单位转换和 NED 坐标轴对齐后的磁力计数据。 
+ * @param[in,out]   att 提供横滚/俯仰角并接收偏航角的姿态状态。
  * 
- * @note    本函数只完成倾斜补偿和几何角度计算，不执行Mag有效性检查、
- *          Innovation拒绝、滤波或Gyro融合。调用方必须先排除ovfl及异常数据。
- * @pre     mag和att必须为有效指针。
+ * @note    输出通常在 [-pi,pi] 范围内。
+ * @note    此函数仅执行几何倾斜补偿和航向计算。
+ *          磁力计数据的有效性检查、新息拒绝（innovation rejection）、滤波，
+ *          以及陀螺仪融合必须由调用者处理。
  */
 void Attitude_CptYaw(const MagData_t *mag, Attitude_t *att);
 

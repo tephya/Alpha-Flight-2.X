@@ -1,3 +1,8 @@
+/**
+ * @file    app_blackbox.c
+ * @brief   Blackbox 后台文件管理与 SD 写入任务实现。
+ */
+
 #include "app_blackbox.h"
 #include "app_shared_types.h"
 #include "bsp_blackbox.h"
@@ -7,7 +12,10 @@
 
 extern osMessageQueueId_t IndicatorEventQueueHandle;
 
+/** 当前是否存在已打开的 Blackbox 日志文件。 */
 static volatile bool s_file_open;
+
+/** 最近一次日志文件关闭操作是否成功。 */
 static volatile bool s_last_close_succeeded;
 
 bool App_Blackbox_IsFileOpen(void)
@@ -20,64 +28,93 @@ bool App_Blackbox_LastCloseSucceeded(void)
     return s_last_close_succeeded;
 }
 
-/**
- * @brief   Task_Blackbox任务入口，由freertos.c的Start_Blackbox转发调用
- * @note    内部流程：BB_Init(挂载SD卡+建文件) ->
- *                   BB_BufferInit ->
- *                   for(;;){BB_WaitReady(osWaitForever); BB_Process();}
- */
 void App_Blackbox_Task(void *argument)
 {
     (void)argument;
 
-    s_file_open = false;     // 还没有任何文件被打开过，开机不自动建文件
+    // 上电后不主动创建日志文件，等待首次 NEWFILE 请求。
+    s_file_open = false;
     s_last_close_succeeded = false;
-    uint8_t last_err_flags = 0; // BB_GetErrorFlags()跳边检测用
 
-    /* 必须在第一次等待/置位控制请求之前调用，
-     *否则BB_RequestNewFile的信号会丢进一个还不存在的对象里 */
+    // 用于检测 Blackbox Error Flag 从 0 -> 非 0 的条件。
+    uint8_t last_err_flags = 0U;
+
+    /*
+     * 必须先创建 Blackbox 内部控制同步对象。
+     * 非则后续 NEWFILE/CLOSE 请求可能发送到尚未初始化的对象。
+     */
     BB_ControlInit();           
 
     for (;;)
     {  
         if(!s_file_open)
         {
+            /*
+             * 无日志文件时阻塞等待控制请求，
+             * 避免 Blackbox Task 在空闲状态持续占用 CPU。
+             */
             uint32_t ctrl = BB_PollControlRequest(osWaitForever);
-            if((int32_t)ctrl >= 0 && (ctrl & BB_CTRL_NEWFILE_REQ))
+
+            if((int32_t)ctrl >= 0 && 
+                (ctrl & BB_CTRL_NEWFILE_REQ))
             {
+                /*
+                 * SD 挂载或文件创建失败时周期性重试。
+                 * Blackbox Task 自身阻塞等待，不影响其他 RTOS Task 运行。
+                 */
                 while(BB_Init() != 0)
                 {
-					osDelay(500);   // 挂载失败(卡未插好/供电未稳)，定期重试而非直接卡死整个飞控
+					osDelay(500); 
 				}
                 BB_BufferInit();
+
                 s_file_open = true;
                 s_last_close_succeeded = false;
             }
             continue;
         }
 
-        /* 50ms只是轮询周期上限，正常情况数据就绪信号量会在缓冲写满时(约每30ms@800Hz)
-         * 提前唤醒，这个超时只是保证控制请求(关闭/开新文件)不会被无限期拖延 */
+        /*
+         * 正常情况下，Blackbox 缓冲区写满后会通过同步信号提前唤醒 Task。
+         * 50 ms 超时只作为轮询上限，保证 CLOSE/NEWFILE 控制请求
+         * 不会因长期没有 READY Buffer 而无限延迟。
+         */
         if (BB_WaitReady(50) == 0)
         {
+            // 一次唤醒后尽量排空所有 READY Buffer，减少待写数据积压。
             while (BB_Process())
-                ; // 一次性排空两块缓冲区里的所有READY，不留到下一轮
+                ;
         }
 
-        uint32_t ctrl = BB_PollControlRequest(0);   // 非阻塞peek，不影响上面数据处理的节奏
+        /*
+         * 数据处理完成后非阻塞检查控制请求，
+         * 避免文件控制流程破坏正常 Buffer 写入节奏。
+         */
+        uint32_t ctrl = BB_PollControlRequest(0);
+
         if((int32_t)ctrl >= 0)
         {
             if(ctrl & BB_CTRL_CLOSE_REQ)
             {
+                /*
+                 * 关闭前先写完所有 READY Buffer，
+                 * BB_Close() 再负责 Flush 尾部数据并真正关闭文件。
+                 */
                 while(BB_Process())
-                    ;       // 关闭前先把剩余READY数据先落盘，再flush尾巴+真正关闭文件
+                    ;
+
                 s_last_close_succeeded = (BB_Close() == 0);
-                s_file_open = false;  // 回到“没有文件”状态，等下一次解锁再开新文件
+
+                // 回到无文件状态，等待下一次 Armed 后的新建请求。
+                s_file_open = false;
             }
 
             if (ctrl & BB_CTRL_NEWFILE_REQ)
             {
-                /* 防御异常的重复NEWFILE请求，避免未关闭旧FIL就重新f_open */
+                /*
+                 * 防御异常重复 NEWFILE 请求。
+                 * 若文件仍处于打开状态，必须先完整关闭后再创建新文件。
+                 */
                 if(s_file_open)
                 {
                     while(BB_Process())
@@ -87,17 +124,24 @@ void App_Blackbox_Task(void *argument)
                 }
 
                 while (BB_Init() != 0)
-                    osDelay(500); // 挂载失败，定期重试而非直接卡死
+                {
+                    osDelay(500);
+                }
                 BB_BufferInit();
+
                 s_last_close_succeeded = false;
                 s_file_open = true;
             }
         }
 
-        /* BB_GetErrorFlags()的bit0(缓冲溢出)/bit1(SD写入失败)都归为EVT_SD_CARD_ERROR，
-         * 没有单独区分的必要，两者都代表“数据没能正常落盘”。只在0->非0跳变沿报一次，
-         * 不会每轮循环重复刷。BB_BufferInit每次开新文件都会把这两个flag清零，
-         * 所以这里不需要额外充值last_error_flags，自然会随下一轮读数同步 */
+        /*
+         * Buffer Overflow 与 SD Write Error 都意味着 Blackbox 数据未正常落盘，
+         * 因此同一上报 EVT_SD_CARD_ERROR。
+         * 
+         * 仅在 Error Flag 从 0 -> 非 0 时上报一次，避免每轮循环重复发送事件。
+         * BB_BufferInit() 在新建日志文件时会清除底层 Error Flag，
+         * Last_err_flags 会在后续循环中自然重新同步。
+         */
         uint8_t err_flags = BB_GetErrorFlags();
         if(err_flags != 0 && last_err_flags == 0)
         {

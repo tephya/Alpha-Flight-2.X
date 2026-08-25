@@ -1,3 +1,8 @@
+/**
+ * @file    app_imu2_redundancy.c
+ * @brief   双 IMU 冗余，健康检测，故障切换及控制周期测量实现。
+ */
+
 #include "app_imu2_redundancy.h"
 #include "app_imu_calibration.h"
 #include "app_level_trim.h"
@@ -9,56 +14,70 @@
 
 extern osMessageQueueId_t IndicatorEventQueueHandle;
 
-#define IMU_FAULT_REPORT_MS 900U // 持续报警重发间隔，需大于EVT_IMU_FAULT节拍自身播放时长(约660ms)
+#define IMU_FAULT_REPORT_MS 900U // Dual Fault 持续期间的故障提示重发周期，ms。
 
-/*====== 切换阈值 ======*/
-#define SWITCH_AWAY_THRESHOLD 5     // 连续5帧异常判定切走
-#define SWITCH_BACK_THRESHOLD 200   // 连续200帧健康判定切回
-#define DUAL_FAULT_CLEAR_THRESHOLD 50   // 需要连续50帧(≈62.5ms@800Hz)正常才解除dual_fault，
-                                            // 避免单帧就无条件清零导致短暂扰动闪烁
+/*
+ * IMU 健康状态迟滞门限。
+ * 故障切换门限较短，恢复门限较长，避免故障边界附近频繁切换。
+ */
+#define SWITCH_AWAY_THRESHOLD 5         // 连续异常达到该数据帧后判定 Active IMU 失效。
+#define SWITCH_BACK_THRESHOLD 200       // 连续健康达到该帧数后恢复 Standby Healthy 标志。
+#define DUAL_FAULT_CLEAR_THRESHOLD 50   // 连续健康达到该帧数后解除 Dual Fault。
 
-/*====== 交叉对比阈值: 静止状态测试稳健阈值(meadian+4*MADstd)与动态批(实际飞行效果，不含剧烈翻滚)P99
- * 取较大者，6轴分开判断 ======*/
-#define ACC_AX_DIFF_THRESHOLD_G 99.0f       // TODO: 测试阈值
+/*
+ * 双 IMU 六轴 CrossCheck 门限。
+ * 
+ * 正式值应根据静态数据分布和实际分型动作数据统计确定；
+ * 当前数值仍属于测试阶段占位门限。
+ */
+#define ACC_AX_DIFF_THRESHOLD_G 99.0f
 #define ACC_AY_DIFF_THRESHOLD_G 99.0f
 #define ACC_AZ_DIFF_THRESHOLD_G 99.0f
 #define GYRO_GX_DIFF_THRESHOLD_DPS 99.9f
 #define GYRO_GY_DIFF_THRESHOLD_DPS 99.9f
 #define GYRO_GZ_DIFF_THRESHOLD_DPS 99.9f
 
-/* ODR=800Hz, 周期1.25ms，超时=3倍周期-3.75ms，向上取整到RTOS tick(1ms)为4ms 
- * 注：这是ms级tick，用于故障超时判定精度足够（只是留裕量的看门狗），
- *     不能拿这个tick分辨率去测量dt，dt必须DWT测*/
+/*
+ * ICM ODR = 800 Hz，对应周期约为 1.25ms。
+ * DRDY Watchdog 取约 3 个采样周期并向上覆盖到 RTOS Tick。
+ * 
+ * 该超时只用于判断数据是否长期未刷新；
+ * 实际控制 Dt 必须由 DWT Cycle Counter 测量。
+ */
 #define ICM_DRDY_WAIT_TIMEOUT_MS 4
+
+/* IMU Cache 允许的最大数据年龄，约 3 个 ODR 周期。 */
 static const float MAX_AGE_S = 3.0f / ICM_ODR_HZ;
 
+/**
+ * @brief   Active IMU 时间戳检查结果。
+ */
 typedef enum
 {
-    ACTIVE_DT_OK = 0,
-    ACTIVE_DT_DUPLICATE,
-    ACTIVE_DT_ANOMALY
+    ACTIVE_DT_OK = 0,       /**< Active IMU 产生新帧，Dt 有效。 */
+    ACTIVE_DT_DUPLICATE,    /**< Active 时间戳未变化，本轮没有新的 Active 帧。 */
+    ACTIVE_DT_ANOMALY       /**< Active 有新帧，但 Dt 超出可信范围。 */
 } ActiveDtResult_t;
 
-static uint32_t s_last_active_cycle;
-static uint8_t s_last_active_sel = 0xFFU;
-static bool s_active_timestamp_valid;
-static uint8_t s_available_mask;        // 启动时实际初始化成功的IMU掩码
+static uint32_t s_last_active_cycle;        // 上一有效 Active IMU 帧的 DWT 时间戳。
+static uint8_t s_last_active_sel = 0xFFU;   // 上一控制周期使用的 Active IMU 编号；0xFF 表示尚未建立。
+static bool s_active_timestamp_valid;       // 当前 Active IMU 是否已经建立有效时间戳基准。
+static uint8_t s_available_mask;    // 启动时 WHO_AM_I 初始化成功，实际可参与冗余管理的 IMU 位掩码。
 
-/**
- * @brief   根据active IMU读取时间戳计算控制周期
- * @param   active_sel  当前active IMU编号，0=IMU1，1=IMU2
- * @param   timestamp_cycle active IMU本次缓存的DWT Cycle时间戳
- * @param   dt_s    输出控制周期，单位秒
- * @retval  ACTIVE_DT_OK    active产生新帧且时间间隔可信
- * @retval  ACTIVE_DT_DUPLICATE active时间戳未变化，本次仅standby刷新
- * @retval  ACTIVE_DT_ANOMALY   active产生新帧，但时间间隔超出可信范围
- *
+/*
+ * 根据 Active IMU 的 DWT 时间戳计算实际控制周期。
+ * 
+ * IMU 切换后的第一帧不跨不同传感器计算 Dt，而使用标称周期重新建立基准。
+ * 时间戳不变表示本轮只刷新了 Standby IMU。
  */
 static ActiveDtResult_t ActiveFrame_GetDt(uint8_t active_sel, uint32_t timestamp_cycle, float *dt_s)
 {
     const float nominal_dt = 1.0f / (float)ICM_ODR_HZ;
 
-    // IMU切换后的第一帧不跨传感器计算dt
+    /*
+     * Active IMU 发生切换后，两颗传感器的上一采样时刻没有连续关系，
+     * 因此丢弃时间基准，从当前传感器重新建立。
+     */
     if(active_sel != s_last_active_sel)
     {
         s_last_active_sel = active_sel;
@@ -75,19 +94,24 @@ static ActiveDtResult_t ActiveFrame_GetDt(uint8_t active_sel, uint32_t timestamp
 
     uint32_t delta_cycle = timestamp_cycle - s_last_active_cycle;
 
-    // 时间戳没变化，说明仍是上一次active IMU缓存
+    // 时间戳没变化，说明仍是上一次 active IMU 缓存
     if(delta_cycle == 0U)
     {
         return ACTIVE_DT_DUPLICATE;
     }
 
-    /* 无论本帧dt是否异常，都更新基准
-     * 否则下一帧还会继续包含这段异常间隔 */
+    /*
+     * 无论当前 Dt 是否异常，都立即更新采样基准。
+     * 否则下一帧仍会继续包含本次异常间隔。
+     */
     s_last_active_cycle = timestamp_cycle;
 
     float measured_dt = (float)delta_cycle / (float)SystemCoreClock;
 
-    // 正常800Hz约为1.25ms；允许偶发丢帧，不继续使用原来的±20%限制
+    /*
+     * 标称 800 Hz Dt 约为 1.25ms。
+     * 当前允许少量丢帧，但拒绝明显异常的过段或过长间隔。
+     */
     if((measured_dt < 0.0005f) || (measured_dt > 0.0050f))
     {
         *dt_s = nominal_dt;
@@ -98,25 +122,29 @@ static ActiveDtResult_t ActiveFrame_GetDt(uint8_t active_sel, uint32_t timestamp
     return ACTIVE_DT_OK;
 }
 
-/**
- * @brief   开启内核里的DWT Cycle Counter(CPU周期计数器)
- * @note    DWT 属于 Cortex-M 的调试/追踪单元（Debug and Trace Unit），默认关闭
- *          DEMCR: Debug Exceptor and Monitor Control Register
+/*
+ * 启用 Cortex-M DWT Cycle Counter。
+ * 
+ * DWT->CYCCNT 提供 CPU Cycle 级时间戳，
+ * 用于测量真实 IMU Sample Dt，而不是依赖 ms 级 RTOS Tick。
  */
 static void DWT_Init(void)
 {
-    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;     // 开启Trace功能模块
-    // 清零DWT内部的32位向上计数器
+    // 开启 Cortex-M Trace 单元，使 DWT 寄存器可用。
+    CoreDebug->DEMCR 
+        |= CoreDebug_DEMCR_TRCENA_Msk;
+
+    // 从零开始运行 32-bit Cycle Counter。
     DWT->CYCCNT = 0;
+
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 }
 
-/**
- * @brief   交叉验证两个ICM测量的数据，判断提供姿态角的传感器是否出现异常
- * @param   a ICM1实体
- * @param   b ICM2实体
- * @retval  false=传感器正常
- *          true=传感器异常
+/*
+ * 对两颗 IMU 的六轴测量执行 CrossCheck。
+ * 
+ * 任一轴差值超过对应门限即认为两颗传感器当前观测不一致。
+ * 本函数只判断“两者是否存在异常差异”，不负责判定具体故障来源。
  */
 static bool CrossCheck_IsAbnormal(const IcmData_t *a, const IcmData_t *b)
 {
@@ -135,12 +163,17 @@ static bool CrossCheck_IsAbnormal(const IcmData_t *a, const IcmData_t *b)
     return false;
 }
 
-/**
- * @brief   ICM错误计数与切换
+/*
+ * 记录一次当前冗余观测异常。
+ * 
+ * 连续异常达到 SWITCH_AWAY_THRESHOLD 后，
+ * 若 Standby 仍被认为健康，则切换 Active IMU；
+ * 若 Standby 已不健康，则锁存 Dual Fault，不再无意义地来回切换。
  */
 static void Health_RecordBad(void)
 {
     g_imu_health.good_frame_count = 0;
+
     if(g_imu_health.bad_frame_count < 0xFFFF)
         g_imu_health.bad_frame_count++;
     
@@ -152,72 +185,96 @@ static void Health_RecordBad(void)
         
         if(standby_healthy)
         {
-            // 备用IMU仍健康，正常切换
-            if (g_imu_health.active_imu_sel == 0)
+            /*
+             * Standby 仍被认为健康时，将当前 Active 标记异常，
+             * 并切换到另一颗 IMU。
+             */
+            if (g_imu_health.active_imu_sel == 0U)
             {
-                g_imu_health.imu1_healthy = 0;
-                g_imu_health.active_imu_sel = 1;
+                g_imu_health.imu1_healthy = 0U;
+                g_imu_health.active_imu_sel = 1U;
             }
             else
             {
-                g_imu_health.imu2_healthy = 0;
-                g_imu_health.active_imu_sel = 0;
+                g_imu_health.imu2_healthy = 0U;
+                g_imu_health.active_imu_sel = 0U;
             }
-            g_imu_health.dual_fault = 0;
+
+            g_imu_health.dual_fault = 0U;
+
             BB_LogImuSwitch(osKernelGetTickCount(), g_imu_health.active_imu_sel);
         }
         else
         {
-            /**
-             * 备用也不健康——切换没有意义，只会在两个都有问题的芯片来回震荡。
-             * 冻结active_imu_sel不变，只标记当前这颗也不健康，置起dual_faule。
-             * 数据仍然输出（聊胜于无），
-             * 但下游必须自己检查这个标志，决定还要不要信任这份数据
-             * 是否因此触发保护性动作，不是这一层该管的事
+            /*
+             * Stanby 已经不健康时，连续切换没有意义，
+             * 因此保持当前 Active 选择不变，并锁存 Dual Fault。
+             * 
+             * 本层只报告冗余状态，不直接决定停桨等上层安全动作。
              */
             if(g_imu_health.active_imu_sel == 0)
+            {
                 g_imu_health.imu1_healthy = 0;
+            }
             else
+            {
                 g_imu_health.imu2_healthy = 0;
+            }
 
-            if(!g_imu_health.dual_fault)            // 跳边沿才记，持续锁存期间不用重复写
+            // Dual Fault 仅在首次进入时写入一次 Blackbox 事件。
+            if(!g_imu_health.dual_fault) 
                 BB_LogDualFault(osKernelGetTickCount());
 
             g_imu_health.dual_fault = 1;
         }
 
+        /*
+         * 完成一次故障状态处理后重新开始健康/异常连续计数，
+         * 避免同一累计窗口被重复消费。
+         */
         g_imu_health.bad_frame_count = 0;
         g_imu_health.good_frame_count = 0;
     }
 }
 
-/**
- * @brief   ICM健康计数
+/*
+ * 记录一次当前冗余观测健康。
+ * 
+ * 连续健康用于恢复 IMU Healthy 标志和解除 Dual Fault，
+ * 恢复门限明显高于切走门限，以形成故障状态迟滞。
  */
 static void Health_RecordGood(void)
 {
     g_imu_health.bad_frame_count = 0;
+
     if(g_imu_health.good_frame_count < 0xFFFF)
         g_imu_health.good_frame_count++;
     
-    // 当前active IMU本身持续正常，标志维持healthy
+    // 当前 active IMU 持续正常，标志维持 healthy。
     if(g_imu_health.active_imu_sel == 0)
+    {
         g_imu_health.imu1_healthy = 1;
+    }
     else
+    {
         g_imu_health.imu2_healthy = 1;
+    }
 
-    /**
-     * active IMU本身能持续正常输出，说明至少有一路可信，
-     * 之前锁存的双路状态解除(如锁存)
+    /*
+     * Active IMU 连续稳定一段时间后，
+     * 说明至少已经恢复一路可信测量，可解除 Dual Fault 锁存。
      */
-    if (g_imu_health.dual_fault && g_imu_health.good_frame_count >= DUAL_FAULT_CLEAR_THRESHOLD)
+    if (g_imu_health.dual_fault && 
+        g_imu_health.good_frame_count >= DUAL_FAULT_CLEAR_THRESHOLD)
     {
         g_imu_health.dual_fault = 0;
     }
     
-    /**
-     * 备用IMU的数据能通过交叉比对+新鲜度检查，说明它本身也在正常输出，
-     * 达到切回阈值后恢复它的健康标志——只恢复标志，不触发实际切换
+    /*
+     * 连续健康达到更长门限后，恢复 Standby IMU 的 Healthy 标志。
+     * 
+     * 这里只恢复健康姿态，不立即切回，
+     * 防止冗余模块在两颗健康 IMU 之间无意义往返切换。
      */
     if(g_imu_health.good_frame_count >= SWITCH_BACK_THRESHOLD)
     {
@@ -234,28 +291,37 @@ static void Health_RecordGood(void)
     }
 }
 
-
+/*
+ * Dual Fault 持续期间向 Indicator Task 发布故障事件。
+ * 
+ * 首次进入立即上报；若故障持续存在，则按固定周期重发，
+ * 避免一次提示播放结束后故障仍然没有可见状态。 
+ */
 static void ImuFault_ReportIfActive(void)
 {
     static bool was_active = false;
     static uint32_t last_repost_tick = 0;
 
-    bool active = (g_imu_health.dual_fault != 0);
+    const bool active = (g_imu_health.dual_fault != 0);
+
     if(active)
     {
-        if (!was_active || (osKernelGetTickCount() - last_repost_tick) >= IMU_FAULT_REPORT_MS)
+        const uint32_t now = osKernelGetTickCount();
+
+        if (!was_active || 
+            (now - last_repost_tick) >= IMU_FAULT_REPORT_MS)
         {
             IndicatorEvent_t evt = EVT_IMU_FAULT;
+
             osMessageQueuePut(IndicatorEventQueueHandle, &evt, 0, 0);
-            last_repost_tick = osKernelGetTickCount();
+
+            last_repost_tick = now;
         }
     }
+
     was_active = active;
 }
 
-/**
- * @brief   初始化IMU冗余处理模块
- */
 void ImuRedundancy_Init(uint8_t init_fail_mask)
 {
     DWT_Init();
@@ -264,32 +330,44 @@ void ImuRedundancy_Init(uint8_t init_fail_mask)
     s_last_active_sel = 0xFFU;
     s_active_timestamp_valid = false;
 
-    s_available_mask = (uint8_t)(~init_fail_mask &
-                                 (IMU_CAL_REQUIRED_IMU1 | IMU_CAL_REQUIRED_IMU2));
+    /*
+     * init_fail_mask 中置位表示对应 IMU 初始化失败，
+     * 因此取反后只保留当前实现支持的两颗 IMU 位。
+     */
+    s_available_mask =
+        (uint8_t)(~init_fail_mask &
+                  (IMU_CAL_REQUIRED_IMU1 |
+                   IMU_CAL_REQUIRED_IMU2));
 
     g_imu_health.imu1_healthy = (s_available_mask & IMU_CAL_REQUIRED_IMU1) != 0U;
     g_imu_health.imu2_healthy = (s_available_mask & IMU_CAL_REQUIRED_IMU2) != 0U;
+
+    /*
+     * 有限使用 IMU1 作为初始 Active；
+     * IMU1 不可用时退化到 IMU2。
+     */
     g_imu_health.active_imu_sel = g_imu_health.imu1_healthy ? 0U : 1U;
+
     g_imu_health.bad_frame_count = 0U;
     g_imu_health.good_frame_count = 0U;
+
     g_imu_health.dual_fault = (s_available_mask == 0U) ? 1U : 0U;
 
-    /* 只校准通过WHO_AM_I初始化的IMU；bias仅保留到本次掉电 */
+    /*
+     * 只有 WHO_AM_I 初始化成功的 IMU 才参与启动校准和 Level Trim。
+     * Gyro Bias 只在本次运行期间有效，不写入 Flash。
+     */
     ImuCalibration_Init(s_available_mask);
     LevelTrim_Init(s_available_mask);
 }
 
-/**
- * @brief   执行ICM冗余检验逻辑，并拷贝姿态数据给调用方
- * @note    本函数执行包含以下动作：
- *          1. 等待任一IMU的DRDY事件（带超时）
- *          2. 触发SPI读取
- *          3. 交叉比对+健康判定+主备切换
- *          4. 测量真实dt
- * @param   out 调用方提供的接收数据结构体指针
- * @param   dt_s 调用方距离上一次调用的时间间隔
- * @retval  true=本帧数据有效可用于结算
- *          false=本帧超时/双路失效，调用方应跳过本次解算
+/*
+ * 执行一次 双 IMU 冗余更新。
+ * 
+ * 处理顺序：
+ * DRDY Wait -> SPI Refresh -> Gyro Calibration -> Bias Apply ->
+ * Level Trim Sampling -> CrossCheck -> Health Update ->
+ * Active Select -> Dt Validation。
  */
 ImuUpdateResult_t ImuRedundancy_Update(IcmData_t *out, float *dt_s, uint8_t *fresh_flags)
 {
@@ -298,19 +376,27 @@ ImuUpdateResult_t ImuRedundancy_Update(IcmData_t *out, float *dt_s, uint8_t *fre
         return IMU_UPDATE_TIMEOUT;
     }
 
+    /*
+     * 任意一颗 IMU 的 DRDY 均可唤醒当前 Task。
+     * 等待时间只承担 Watchdog 功能，不用与控制周期测量。
+     */
     uint32_t evt = osEventFlagsWait(g_icmDataReadyEvtId,
                                     ICM1_DRDY_FLAG | ICM2_DRDY_FLAG,
                                     osFlagsWaitAny,
                                     ICM_DRDY_WAIT_TIMEOUT_MS);
     
-    if((int32_t)evt < 0)    // CMSIS-RTOS2: 负值为错误码，osFlagsErrorTimeout即超时
+    /*
+     * CMSIS-RTOS 2 EventFlags 错误码按负值解释。
+     * 两路 DRDY 均未在 Watchdog 窗口内到达时记一次异常。
+     */
+    if((int32_t)evt < 0)
     {
         if (fresh_flags != NULL)
         {
             *fresh_flags = 0U;
         }
 
-        Health_RecordBad();     // 两路都没等到，算一次中断型异常，计入统一计数器
+        Health_RecordBad();
         ImuFault_ReportIfActive();
 
         return g_imu_health.dual_fault
@@ -326,9 +412,14 @@ ImuUpdateResult_t ImuRedundancy_Update(IcmData_t *out, float *dt_s, uint8_t *fre
     }
 
     IcmData_t d1, d2;
-    bool got1 = (evt & ICM1_DRDY_FLAG) != 0;
-    bool got2 = (evt & ICM2_DRDY_FLAG) != 0;
 
+    const bool got1 = (evt & ICM1_DRDY_FLAG) != 0;
+    const bool got2 = (evt & ICM2_DRDY_FLAG) != 0;
+
+    /*
+     * 仅对本轮产生的 DRDY 的 IMU 触发新读取；
+     * 随后统一复制两颗 IMU Cache，便于 CrossCheck 和新鲜度判断。
+     */
     if(got1)
         ICM_TriggerRead(ICM_INSTANCE_1);
     if(got2)
@@ -337,27 +428,45 @@ ImuUpdateResult_t ImuRedundancy_Update(IcmData_t *out, float *dt_s, uint8_t *fre
     ICM_CopyTo(ICM_INSTANCE_1, &d1);
     ICM_CopyTo(ICM_INSTANCE_2, &d2);
 
-    bool cal_ready = ImuCalibration_Update(
+    /*
+     * 仅将“已成功初始化且本轮确实有新数据”的 IMU 样本
+     * 提交给启动 Gyro Bias Calibration。
+     */
+    const bool cal_ready = ImuCalibration_Update(
         &d1, got1 && ((s_available_mask & IMU_CAL_REQUIRED_IMU1) != 0U),
         &d2, got2 && ((s_available_mask & IMU_CAL_REQUIRED_IMU2) != 0U));
     
     if(!cal_ready)
+    {
         return IMU_UPDATE_CALIBRATION;
+    }
 
-    /* CrossCheck、姿态解算和PID统一使用以去零偏数据。 */
+    /*
+     * CrossCheck，姿态估计与控制器统一使用去除启动 Gyro Bias 后的数据，
+     * 避免固定零偏直接表现为两颗 IMU 的长期差异。
+     */
     if((s_available_mask & IMU_CAL_REQUIRED_IMU1) != 0U)
         ImuCalibration_Apply(ICM_INSTANCE_1, &d1);
     
     if((s_available_mask & IMU_CAL_REQUIRED_IMU2) != 0U)
         ImuCalibration_Apply(ICM_INSTANCE_2, &d2);
 
+    /*
+     * Level Trim 使用校准后的 IMU 数据持续维护自身样本状态，
+     * 但只把本轮真正 Fresh 的传感器标记为新样本。
+     */
     LevelTrim_UpdateSamples(
         &d1, got1 && ((s_available_mask & IMU_CAL_REQUIRED_IMU1) != 0U),
         &d2, got2 && ((s_available_mask & IMU_CAL_REQUIRED_IMU2) != 0U));
 
     // DebugUart_PrintImuDiff(&d1, &d2);
 
+    /*
+     * 使用 DWT 时间戳检查两颗可用 IMU Cache 的数据年龄。
+     * 即使本轮只有一颗产生 DRDY，也能是被另一颗是否已经长期未刷新。
+     */
     uint32_t now_cycle = DWT->CYCCNT;
+
     float age1_s = (float)(now_cycle - d1.timestamp_cycle) / (float)SystemCoreClock;
     float age2_s = (float)(now_cycle - d2.timestamp_cycle) / (float)SystemCoreClock;
 
@@ -371,8 +480,12 @@ ImuUpdateResult_t ImuRedundancy_Update(IcmData_t *out, float *dt_s, uint8_t *fre
     }
     else if (s_available_mask == 
             (IMU_CAL_REQUIRED_IMU1 | IMU_CAL_REQUIRED_IMU2) && 
-        CrossCheck_IsAbnormal(&d1, &d2))
+            CrossCheck_IsAbnormal(&d1, &d2))
     {
+        /*
+         * 只有两颗 IMU 都实际存在时才执行 CrossCheck。
+         * 单 IMU 降级模式无法通过相互比较判断测量一致性。
+         */
         Health_RecordBad();
     }
     else
@@ -387,16 +500,25 @@ ImuUpdateResult_t ImuRedundancy_Update(IcmData_t *out, float *dt_s, uint8_t *fre
         return IMU_UPDATE_DUAL_FAULT;
     }
 
-    uint8_t active_sel = g_imu_health.active_imu_sel;
+    const uint8_t active_sel = g_imu_health.active_imu_sel;
     const IcmData_t *active_data = (active_sel == 0U) ? &d1 : &d2;
 
-    ActiveDtResult_t dt_result = ActiveFrame_GetDt(active_sel, active_data->timestamp_cycle, dt_s);
+    /*
+     * 只有 Active IMU 时间戳真正推进，
+     * 才允许本轮作为新的 Flight Control Sample。
+     */
+    const ActiveDtResult_t dt_result = ActiveFrame_GetDt(active_sel, active_data->timestamp_cycle, dt_s);
 
     if(dt_result == ACTIVE_DT_DUPLICATE)
     {
         return IMU_UPDATE_STANDBY_ONLY;
     }
 
+    /*
+     * Active 有新帧时先输出其完整数据。
+     * 即使 Dt 异常，调用方仍可获得对应帧用于诊断，
+     * 但必须根据返回状态跳过正常姿态积分与 PID。
+     */
     *out = *active_data;
 
     if(dt_result == ACTIVE_DT_ANOMALY)

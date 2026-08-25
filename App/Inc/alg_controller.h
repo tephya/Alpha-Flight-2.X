@@ -1,33 +1,39 @@
+/**
+ * @file    alg_controller.h
+ * @brief   FlightControl 姿态与角速度控制器接口。
+ */
+
 #ifndef __ALG_CONTROLLER_H
 #define __ALG_CONTROLLER_H
 
 #include <stdint.h>
 #include "alg_pid.h"
 
-// 遥控油门映射后的控制量上限
+/** 遥控油门映射后的内部控制量上限。 */
 #define ALG_THROTTLE_MAX 1152.0f
 
 /**
  * @brief 角度控制器（姿态外环）。
  * 
- * 输入：目标角度与实测角度，单位：°；
- * 输出：目标角速度，单位 °/s，作为 Rate Controller 的输入。
+ * 根据 Roll/Pitch 目标角度与实测角度计算目标角速度，
+ * 输出作为 Rate Controller 的输入。
  * 
- * @note 当前仅控制 Roll/Pitch，Yaw Heading Hold使用独立外环实现。
+ * @note 当前仅控制 Roll/Pitch，Yaw Heading Hold 使用独立外环实现。
  */
 typedef struct
 {
     PID_t roll;
     PID_t pitch;
 
-    float roll_rate_target;     // Roll目标角速度
-    float pitch_rate_target;    // Pitch目标角速度
+    float roll_rate_target;     /**< Roll 目标角速度，deg/s。 */
+    float pitch_rate_target;    /**< Pitch 目标角速度，deg/s。 */
 } AngleController_t;
 
+/** 全局姿态角度控制器实例。 */
 extern AngleController_t angle_controller;
 
 /**
- * @brief   初始化姿态角度控制器(外环)。
+ * @brief   初始化姿态角度控制器。
  *
  * 配置 Roll 和 Pitch 轴的角度 PID 参数，并清零输出。
  */
@@ -36,21 +42,21 @@ void AngleController_Init(void);
 /**
  * @brief   复位姿态角度控制器状态。
  *
- * 清除外环 PID 的积分器历史状态及当前目标角速度。
+ * 清除 PID 历史状态及当前目标角速度。
  */
 void AngleController_Reset(void);
 
 /**
- * @brief   更新姿态角度控制器（外环），计算期望角速度。
+ * @brief   更新姿态角度控制器。
  *
- * 根据期望欧拉角与当前测量欧拉角，计算出内环所需的期望角速度。
- * 结果直接存入 angle_controller.roll_rate_target / pitch_rate_target 中。
+ * 根据目标姿态角与实测姿态角计算 Roll/Pitch 目标角速度。
+ * 结果写入 angle_controller 的 rate_target 字段。
  *
- * @param[in]   roll_target   Roll目标角度，°
- * @param[in]   pitch_target  Pitch目标角度，°
- * @param[in]   roll_meas     Roll实测角度，°
- * @param[in]   pitch_meas    Pitch实测角度，°
- * @param[in]   dt            控制周期，s
+ * @param[in]   roll_target   Roll目标角度，deg。
+ * @param[in]   pitch_target  Pitch目标角度，deg。
+ * @param[in]   roll_meas     Roll实测角度，deg。
+ * @param[in]   pitch_meas    Pitch实测角度，deg。
+ * @param[in]   dt            控制周期，s。
  * 
  * @pre 必须先调用 AngleController_Init()。
  */
@@ -61,10 +67,10 @@ void AngleController_Update(float roll_target,
                             float dt);
 
 /**
- * @brief 角度控制器（姿态外环）。
+ * @brief 角速度控制器（外环）。
  * 
- * 输入：目标角速度与实测角速度，单位：°/s；
- * 输出：无量纲控制量，直接送入 Mixer
+ * 根据目标角速度和实测角速度计算无量纲控制输出，
+ * 输出直接送 Mixer。
  */
 typedef struct
 {
@@ -72,44 +78,48 @@ typedef struct
     PID_t pitch;
     PID_t yaw;
 
-    float roll_output;      // Roll 控制输出
-    float pitch_output;     // Pitch 控制输出
-    float yaw_output;       // Yaw 控制输出
+    float roll_output;      /**< Roll 控制输出。 */
+    float pitch_output;     /**< Pitch 控制输出。 */
+    float yaw_output;       /**< Yaw 控制输出。 */
 } RateController_t;
 
+/** 全局角速度控制器实例。 */
 extern RateController_t rate_controller;
 
 /**
- * @brief   初始化角速度控制器（内环）。
+ * @brief   初始化角速度控制器。
+ * 
+ * 配置 Roll/Pitch/Yaw 内环参数并清零控制状态。
  */
 void RateController_Init(void);
 
 /**
  * @brief   复位角速度控制器状态。
  * 
- * 清除内环 PID 积分器历史状态，并将环控输出量归零。
+ * 清除 PID 历史状态并将控制输出归零。
  */
 void RateController_Reset(void);
 
 /**
- * @brief   控制Roll/Pitch Rate Feedforward是否参与输出。
- * @param   enabled     0=关闭；非0=启用
+ * @brief   设置 Roll/Pitch Rate Feedforward 是否参与输出。
+ * 
+ * @param[in]   enabled     0=关闭；非0=启用。
  */
 void RateController_SetRollPitchFeedForwardEnabled(uint8_t enabled);
 
 /**
- * @brief   更新角速度控制器（内环），计算混空气输入量。
+ * @brief   更新角速度控制器。
  *
- * 包含常规的 Roll/Pitch 闭环，以及带有动态积分缩放的 Yaw 闭环。
- * 结果直接存入 rate_controller 的 output 字段中。
+ * 根据目标角速度与实测角速度计算 Roll/Pitch/Yaw 控制输出。
+ * Yaw 回路包含动态积分缩放，结果写入 rate_controller 的 output 字段。
  *
- * @param[in]   roll_rate_target  Roll 目标角速度，°/s
- * @param[in]   pitch_rate_target Pitch 目标角速度，°/s
- * @param[in]   yaw_rate_target   Yaw 目标角速度，°/s
- * @param[in]   roll_rate         Roll 实测角速度，°/s
- * @param[in]   pitch_rate        Pitch 实测角速度，°/s
- * @param[in]   yaw_rate          Yaw 实测角速度，°/s
- * @param[in]   dt                控制周期，s
+ * @param[in]   roll_rate_target  Roll 目标角速度，deg/s。
+ * @param[in]   pitch_rate_target Pitch 目标角速度，deg/s。
+ * @param[in]   yaw_rate_target   Yaw 目标角速度，deg/s。
+ * @param[in]   roll_rate         Roll 实测角速度，deg/s。
+ * @param[in]   pitch_rate        Pitch 实测角速度，deg/s。
+ * @param[in]   yaw_rate          Yaw 实测角速度，deg/s。
+ * @param[in]   dt                控制周期，s。
  */
 void RateController_Update(float roll_rate_target,
                            float pitch_rate_target,
@@ -120,13 +130,16 @@ void RateController_Update(float roll_rate_target,
                            float dt);
 
 /**
- * @brief Yaw Heading Hold外环。
+ * @brief 更新 Yaw Heading Hold 外环。
+ * 
+ * 根据目标航向角与当前航向角计算 Yaw 目标角速度。
  *
- * @param[in,out]   pid_yaw   Yaw外环PID示例。
- * @param[in]       yaw_target_deg  期望航向角(deg)。
- * @param[in]       yaw_meas_deg    当前测量航向角(deg)。
- * @param[in]       dt              控制周期(s)。
- * @return  float   目标Yaw角速度(deg/s)。
+ * @param[in,out]   pid_yaw         Yaw 外环 PID 实例。
+ * @param[in]       yaw_target_deg  目标航向角，deg。
+ * @param[in]       yaw_meas_deg    当前航向角，deg。
+ * @param[in]       dt              控制周期，s。
+ * 
+ * @return  Yaw 目标角速度，deg/s。
  */
 float YawHeadingHold_Update(PID_t *pid_yaw,
                             float yaw_target_deg,
@@ -134,37 +147,37 @@ float YawHeadingHold_Update(PID_t *pid_yaw,
                             float dt);
 
 /**
- * @brief   将遥控器通道映射为 Roll 目标角度。
+ * @brief   将遥控器 Roll 通道映射为目标角度。
  * @param[in]   ch  原始通道值。
- * @return  float    目标角度，范围 [-30.0,30.0]。
+ * @return  Roll 目标角度，范围 [-30.0,30.0] deg。
  */
 float Map_Roll(uint16_t ch);
 
 /**
- * @brief   将遥控器通道映射为 Pitch 目标角度。
+ * @brief   将遥控器 Pitch 通道映射为目标角度。
  * 
  * @param[in]   ch  原始通道值。
- * @return  float   目标角度，范围 [-30.0,30.0]。
+ * @return  Pitch 目标角度，范围 [-30.0,30.0] deg。
  * 
- * @note    结果取反。适配摇杆前推（数值增大）产生低头（负俯仰）的航模习惯。
+ * @note    映射结果取反，使摇杆前推对应负 Pitch（低头）。
  */
 float Map_Pitch(uint16_t ch);
 
 /**
- * @brief   将遥控器通道映射为 Yaw 目标角速度。
+ * @brief   将遥控器 Yaw 通道映射为目标角速度。
  * 
  * @param[in]   ch  原始通道值。
- * @return  float   目标角速度，范围[-90.0,90.0]
+ * @return  Yaw 目标角速度，范围 [-90.0,90.0] deg/s。
  * 
- * @note    返回结果取反。适配具体的偏航坐标系方向定义。
+ * @note    映射结果取反，以匹配当前 Yaw 坐标系方向定义。
  */
 float Map_Yaw(uint16_t ch);
 
 /**
- * @brief   将遥控器油门通道映射为内部控制量。
+ * @brief   将遥控器油门通道映射为内部油门控制量。
  * 
  * @param[in]   ch  原始通道值。
- * @return uint16_t 映射后的油门量，范围 [0, ALG_THROTTLE_MAX]。
+ * @return  映射后的油门量，范围 [0, ALG_THROTTLE_MAX]。
  */
 uint16_t Map_Throttle(uint16_t ch);
 

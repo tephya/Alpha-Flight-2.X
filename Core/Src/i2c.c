@@ -121,9 +121,11 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
 /* USER CODE BEGIN 1 */
 /**
  * @brief   写指定寄存器
+ * 
  * @param   dev_addr  7位从机地址
  * @param   reg_addr  寄存器地址
  * @param   data      待写入数据
+ * 
  * @retval  HAL_OK=成功，其余为HAL错误码
  */
 HAL_StatusTypeDef IIC_WriteReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t data)
@@ -140,9 +142,11 @@ HAL_StatusTypeDef IIC_WriteReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t data)
 
 /**
  * @brief   读指定寄存器
+ * 
  * @param   dev_addr  7位从机地址
  * @param   reg_addr  寄存器地址
  * @param   data      读寄存器结果输出指针
+ * 
  * @retval  HAL_OK=成功，其余为HAL错误码
  */
 HAL_StatusTypeDef IIC_ReadReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data)
@@ -159,10 +163,12 @@ HAL_StatusTypeDef IIC_ReadReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data)
 
 /**
  * @brief   从指定寄存器开始连续读多个字节
+ * 
  * @param   dev_addr  7位从机地址
  * @param   reg_addr  起始寄存器地址
  * @param   buf       接收缓冲区
  * @param   len       读收字节数
+ * 
  * @retval  HAL_OK=写成功，其余为HAL错误码
  */
 HAL_StatusTypeDef IIC_ReadBurst(uint8_t dev_addr, uint8_t reg_addr, uint8_t *buf, uint16_t len)
@@ -177,24 +183,30 @@ HAL_StatusTypeDef IIC_ReadBurst(uint8_t dev_addr, uint8_t reg_addr, uint8_t *buf
 }
 
 /**
- * @brief   恢复SDA被从机持续拉低的I2C1 Bus
- * @note    当前工程I2C1使用PB6=SCL、PB7=SDA，且Bus上只有QMC。
- *          恢复完成后重新初始化I2C1，但不负责重新配置QMC寄存器。
+ * @brief   恢复SDA被从机持续拉低的I2C1 Bus。
+
  * @retval  HAL_OK : SCL/SDA均已释放，I2C1不再处于BUSY
  *          HAL_BUSY : 恢复后线路或外设仍处于BUSY
+ *
+ * @note    当前工程I2C1使用PB6=SCL、PB7=SDA，且Bus上只有QMC。
+ *          恢复完成后重新初始化I2C1，但不负责重新配置QMC寄存器。
  */
 HAL_StatusTypeDef IIC_RecoverBus(void)
 {
   GPIO_InitTypeDef gpio = {0};
 
-  /* 关闭I2C外设并释放其对PB6/PB7复用功能的控制。
-   * HAL_I2C_DeInit同时会调用HAL_I2C_MspDeInit。 */
+  /* 
+   * 关闭I2C外设并释放其对PB6/PB7复用功能的控制，
+   * HAL_I2C_DeInit同时会调用HAL_I2C_MspDeInit。
+   */
   (void)HAL_I2C_DeInit(&hi2c1);
 
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /* 先将ODR置高，再切换为开漏输出，避免切换瞬间主动拉低线路。
-   * 开漏输出“高”实际表现释放线路，由外部上拉产生高电平。 */
+  /* 
+   * 先将ODR置高，再切换为开漏输出，避免切换瞬间主动拉低线路。
+   * 开漏输出“高”实际表现释放线路，由外部上拉产生高电平。 
+   */
   HAL_GPIO_WritePin(GPIOB, SCL_Pin | SDA_Pin, GPIO_PIN_SET);
 
   gpio.Pin = SCL_Pin | SDA_Pin;
@@ -217,7 +229,7 @@ HAL_StatusTypeDef IIC_RecoverBus(void)
     IIC_BusRecoveryDelay();
   }
 
-  /* 手工产生STOP：SCL为高期间，SDA从低跳变为高 */
+  /* 手工产生STOP：SCL为高期间，SDA从低跳变为高。 */
   HAL_GPIO_WritePin(SDA_GPIO_Port, SDA_Pin, GPIO_PIN_RESET);
   IIC_BusRecoveryDelay();
 
@@ -230,8 +242,10 @@ HAL_StatusTypeDef IIC_RecoverBus(void)
   const GPIO_PinState scl_state = HAL_GPIO_ReadPin(SCL_GPIO_Port, SCL_Pin);
   const GPIO_PinState sda_state = HAL_GPIO_ReadPin(SDA_GPIO_Port, SDA_Pin);
 
-  /* 恢复I2C1复用功能和HAL状态。
-   * MX_I2C1_Init内部会重新配置PB6/PB7为AF_OD。 */
+  /* 
+   * 恢复I2C1复用功能和HAL状态。
+   * MX_I2C1_Init内部会重新配置PB6/PB7为AF_OD。
+   */
   MX_I2C1_Init();
 
   if(scl_state != GPIO_PIN_SET || sda_state != GPIO_PIN_SET)

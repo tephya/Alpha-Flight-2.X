@@ -1,41 +1,61 @@
+/**
+ * @file    bsp_elrs.c
+ * @brief   基于 UART DMA Circular Buffer 的 CRSF 接收与解析实现。
+ */
+
 #include "bsp_elrs.h"
 #include "usart.h"
 #include "cmsis_os2.h"
 
-#define BUFF_SIZE 64        // CRSF单帧最大字节(Sync+Len+Data(≤62))
-#define DMA_BUF_SIZE 128
+#define BUFF_SIZE 64        // CRSF 完整 Frame 最大长度，Byte。
+#define DMA_BUF_SIZE 128    // UART DAM Circular RX Buffer 长度，Byte。
 
-/**
- * CRSF失联判定阈值
- * 150Hz Packet Rate —— 标称间隔6.67ms，约30个150Hz周期留出偶发丢帧/RF干扰的容忍空间
- * TODO：关闭遥控发射端，观察link_ok多久变false来验证，不合适再调
+/*
+ * RC Link Failsafe Timeout，ms。
+ * 
+ * 只有成功通过 CRC 校验的 RC Channel Frame 才会刷新该计时器；
+ * Link Statistics 等其他 CRSF Frame 不参与 RC link 存活判断。
  */
 #define CRSF_FAILSAFE_TIMEOUT_MS 200U
 
+#define CRSF_ADDRESS_FLIGHT_CONTROLLER 0xC8U    // CRSF Flight Controller Device Address。
+#define CRSF_FRAMETYPE_RC_CHANNELS_PACKED 0x16U // CRSF RC Channels Packed Frame Type。
+#define CRSF_FRAMETYPE_LINK_STATISTICS 0x14U    // CRSF Link Statistics Frame Type。
+
+/**
+ * @brief   CRSF 字节流组帧状态。
+ */
 typedef enum
 {
-    WAIT_SYNC, // 等Sync
-    READ_LEN,  // 读帧长
-    READ_DATA  // 读数据
+    WAIT_SYNC, /**< 等待 Frame Address / Sync。 */
+    READ_LEN,  /**< 等待 Length 字段。 */
+    READ_DATA  /**< 接收 Type + Payload + CRC。 */
 } RCState_t;
 
-static RCState_t s_state = WAIT_SYNC;     // 当前状态
-static uint8_t s_idx = 0;            // 缓冲区写入位置
-static uint8_t s_frame_len = 0;        
-static uint8_t s_frame_ready = 0;
-static uint16_t s_read_ptr = 0;
+static RCState_t s_state = WAIT_SYNC;   // 当前 CRSF Parser 状态。
+static uint8_t s_idx = 0;               // 当前 Frame Buffer 写入位置。
+static uint8_t s_frame_len = 0;         // 当前完整 CRSF Frame 长度，Byte。
+static uint8_t s_frame_ready = 0;       // 是否已经组装出一条等待解析的完整 Frame。
+static uint16_t s_read_ptr = 0;         // 软件当前已经消费到的 DMA Circular Buffer 位置。
 
-static uint8_t s_frame_buf[BUFF_SIZE];
+static uint8_t s_frame_buf[BUFF_SIZE];  // 当前正在组装的 CRSF Frame。
+
 #pragma arm section zidata = "DMA_SAFE_SRAM"
-static uint8_t s_dma_rx_buf[DMA_BUF_SIZE];
+
+static uint8_t s_dma_rx_buf[DMA_BUF_SIZE]; // USART2 RX DMA Circular Buffer。
+
 #pragma arm section zidata
 
-static RCChannelData_t s_rc_data = {0};
-static volatile uint32_t s_last_valid_frame_tick = 0U;
-static bool s_has_valid_rc_frame = false;
+static RCChannelData_t s_rc_data = {0};     // 最近一次成功解析得到的 RC / Link 状态。
+static bool s_has_valid_rc_frame = false;   // 系统启动后是否至少收到过一条有效 RC Channel Frame。
+static volatile uint32_t s_last_valid_frame_tick = 0U;      // 最近一条有效 RC Channel Frame 的接收时间。
 
-/* 8bit CRC8 码表
- * 查表方式速度更快 */
+/*
+ * CRSF CRC-8 Lookup Table。
+ * 
+ * 使用 CRSF CRC-8 Polynomial 预计算得到，
+ * 通过查表避免运算时逐 Bit 计算。
+ */
 static const uint8_t crc8_table[256] = {
     0x00, 0xD5, 0x7F, 0xAA, 0xFE, 0x2B, 0x81, 0x54,
     0x29, 0xFC, 0x56, 0x83, 0xD7, 0x02, 0xA8, 0x7D,
@@ -70,53 +90,90 @@ static const uint8_t crc8_table[256] = {
     0x84, 0x51, 0xFB, 0x2E, 0x7A, 0xAF, 0x05, 0xD0,
     0xAD, 0x78, 0xD2, 0x07, 0x53, 0x86, 0x2C, 0xF9};
 
+/*
+ * 将 UART 接收到的单个 Byte 喂入 CRSF 组帧状态机。
+ * 
+ * Frame 格式：
+ * 
+ * [Address][Length][Type][Payload...][CRC]
+ * 
+ * Length 表示从 Type 到 CRC 的总字节数，
+ * 因此完整 Frame 长度为 Length + 2。
+ */
 static void ELRS_StateMachine(uint8_t byte)
 {
     switch (s_state)
     {
-    case WAIT_SYNC:                         // 等Sync
-        if(byte == 0xC8)
+        case WAIT_SYNC:
         {
-            if(s_frame_ready)       // 上一帧还没被消费，丢弃新帧
-                break;
-            s_state = READ_LEN;
-            s_frame_buf[s_idx++] = 0xC8;
-        }
-        break;
-    
-    case READ_LEN:                         // 读len
-        if(byte > 62)
-        {
-            s_state = WAIT_SYNC;
-            s_idx = 0;
+            if (byte == CRSF_ADDRESS_FLIGHT_CONTROLLER)
+            {
+                /*
+                 * 当前实现只有一块 Frame Buffer。
+                 * 上一帧尚未解析时不覆盖它。
+                 */
+                if (s_frame_ready)
+                {
+                    break;
+                }
+
+                s_idx = 0U;
+                s_frame_buf[s_idx++] = CRSF_ADDRESS_FLIGHT_CONTROLLER;
+
+                s_state = READ_LEN;
+            }
             break;
         }
-        s_state = READ_DATA;
-        s_frame_buf[s_idx++] = byte;
-        s_frame_len = byte + 2;
-        break;
+        
+        case READ_LEN:
+        {
+            /*
+             * CRSF Length 最大为 62，
+             * 加上 Address + Lenth 后完整 Frame 最大 64 Byte。
+             */
+            if (byte > 62)
+            {
+                s_state = WAIT_SYNC;
+                s_idx = 0;
+                break;
+            }
+            
+            s_frame_buf[s_idx++] = byte;
+            s_frame_len = byte + 2;
+            s_state = READ_DATA;
+            break;
+        }
 
-    case READ_DATA:                        // 收数据
-        s_frame_buf[s_idx++] = byte;
-        if(s_idx == s_frame_len)
+        case READ_DATA:
+        {
+            s_frame_buf[s_idx++] = byte;
+
+            if (s_idx == s_frame_len)
+            {
+                s_state = WAIT_SYNC;
+                s_frame_ready = 1;
+                s_idx = 0;
+            }
+            break;
+        }
+
+        default:
         {
             s_state = WAIT_SYNC;
-            s_frame_ready = 1;
-            s_idx = 0;
+            s_idx = 0U;
+            break;
         }
-        break;
-
-    default:
-        return;
     }
 }
 
-/**
- * @brief   计算 CRSF 数据帧的 CRC8 校验码
- * @note    CRSF 协议规范：CRC 校验范围仅包含 Type 字节 和 Payload 数据区，
- * 		    不包含 Sync 字节(0) 和 Length 字节(1)。
- * @param   None
- * @retval  计算出的 8 位 CRC 校验值
+/*
+ * 计算当前 CRSF Frame 的 CRC-8.
+ * 
+ * CRSF CRC 覆盖范围为：
+ * 
+ * [Type][Payload...]
+ * 
+ * 不包含 Address，Length 和 Frame 尾部已有的 CRC Byte。
  */
 static uint8_t CRSF_CRC8(void)
 {
@@ -127,82 +184,137 @@ static uint8_t CRSF_CRC8(void)
     return crc;
 }
 
-/**
- * @brief   解析 CRSF 数据帧
+/*
+ * 解析一条已经完成组帧并通过 CRC 校验的 CRSF Frame。
+ * 
+ * 当前处理：
+ * - RC Channels Packed；
+ * - Link Statistics。
+ * 
+ * 其他合法 Frame 暂时忽略。
  */
 static int8_t CRSF_ParseFrame(void)
 {
-    uint8_t offset, byte_index, start_bit;
-    uint32_t raw;
-
-    if(!s_frame_ready)
+    if (!s_frame_ready)
         return -1;
 
     s_frame_ready = 0;
 
+    /*
+     * CRC Byte 位于完整 Frame 最后一字节。
+     */
     if(s_frame_buf[s_frame_len - 1] != CRSF_CRC8())
-        return -1;          // CRC失败，拒绝
+        return -1;
     
     switch (s_frame_buf[2])
     {
-    case 0x16:          // 摇杆通道数据
-        for (int i = 0; i < 16; i++)
+        case CRSF_FRAMETYPE_RC_CHANNELS_PACKED:
         {
-            start_bit = i * 11;
-            byte_index = start_bit / 8;
-            offset = start_bit % 8;
+            /*
+             * RC Channels Packed Payload:
+             * 16 个 Channel × 11 bit = 176 bit = 22 Byte。
+             * 
+             * 每个 Channel 的 11 bit 数据连续紧密排列，
+             * 不与 Byte Boundary 对齐，因此需要根据 Bit Offset 解包。
+             */
+            for (int i = 0; i < 16; i++)
+            {
+                const uint16_t start_bit = (uint16_t)i * 11;
+                const uint8_t byte_index = (uint8_t)(start_bit / 8);
+                const uint8_t bit_offset = (uint8_t)(start_bit % 8);
 
-            raw = (uint32_t)s_frame_buf[byte_index + 3]         // 跳过 Sync + Len + Type (3Bytes)
-                | (uint32_t)s_frame_buf[byte_index + 4] << 8 
-                | (uint32_t)s_frame_buf[byte_index + 5] << 16;
+                /*
+                 * 从当前位置连续拼出足够宽的临时整数，
+                 * 再右移到当前 Channel 起始 Bit 并截取最低 11 bit。
+                 * 
+                 * +3 用于跳过：
+                 * Address + Length + Type。
+                 */
+                const uint32_t raw = 
+                    (uint32_t)s_frame_buf[byte_index + 3] | 
+                    (uint32_t)s_frame_buf[byte_index + 4] << 8 | 
+                    (uint32_t)s_frame_buf[byte_index + 5] << 16;
 
-            s_rc_data.channels[i] = (uint16_t)((raw >> offset) & 0x7FF);
+                s_rc_data.channels[i] = 
+                    (uint16_t)((raw >> bit_offset) & 0x7FF);
+            }
+
+            /*
+             * 只有 CRC 正确的 RC Channel Frame
+             * 才证明当前遥控控制链路仍在持续工作。
+             */
+            s_last_valid_frame_tick = osKernelGetTickCount();
+            s_has_valid_rc_frame = true;
+            break;
         }
 
-        s_last_valid_frame_tick = osKernelGetTickCount();
-        s_has_valid_rc_frame = true;
-        break;
+        case CRSF_FRAMETYPE_LINK_STATISTICS:
+        {
+            /*
+             * 当前只提取 Uplink RSSI1，LQ 和 SNR，
+             * 其余 ink Statistics 字段暂未使用。
+             */
+            s_rc_data.rssi = s_frame_buf[3];
+            s_rc_data.lq = s_frame_buf[5];
+            s_rc_data.snr = (int8_t)s_frame_buf[6];
+            break;
+        }
 
-    case 0x14:          // 链路质量数据
-        s_rc_data.rssi = s_frame_buf[3];
-        s_rc_data.lq = s_frame_buf[5];
-        s_rc_data.snr = (int8_t)s_frame_buf[6];
-        break;
-
-    default:
-        break;
+        default:
+            break;
     }
 
     return 1;
 }
 
-/**
- * @brief   启动DMA循环接收
- * @note    USART2本身由CubeMX的MX_USART2_UART_Init()完成
- */
 void ELRS_Init(void)
 {
-    HAL_UART_Receive_DMA(&huart2, s_dma_rx_buf, DMA_BUF_SIZE);
+    /*
+     * USART2 本身由 CubeMX 初始化。
+     * 
+     * 这里启动 RX DMA 后，DMA 持续循环写入 s_dma_rx_buf；
+     * ELRS_Poll() 通过 DMA Current Counter 推算硬件 Write Pointer。
+     */
+    (void)HAL_UART_Receive_DMA(&huart2, s_dma_rx_buf, DMA_BUF_SIZE);
 }
 
-/**
- * @brief   轮询读取 DMA 接收环形缓冲区中的新数据
- * @note    通过计算 DMA 硬件剩余传输量得出 write_ptr，与本地 read_ptr 进行追赶。
- * 		    将追赶过程中的新字节逐个喂入 CRSF 协议状态机进行组帧。
- */
 void ELRS_Poll(void)
 {
-    uint16_t counter = __HAL_DMA_GET_COUNTER(huart2.hdmarx);
-    uint16_t write_ptr = (DMA_BUF_SIZE - counter) % DMA_BUF_SIZE;
+    /*
+     * DMA Remaining 表示当前这一轮 Circular DMA 中，
+     * 距离本轮传输计数归零还剩多少个 Byte。
+     * 
+     * 因此：
+     * 
+     * write_ptr = Buffer Size - Remaining Count
+     * 
+     * 当 DMA 回绕时再通过取模回到 Buffer 起始位置。
+     */
+    const uint16_t dma_remaining = 
+        (uint16_t)__HAL_DMA_GET_COUNTER(huart2.hdmarx);
 
+    const uint16_t write_ptr = 
+        (uint16_t)(DMA_BUF_SIZE - dma_remaining) % DMA_BUF_SIZE;
+
+    /*
+     * 软件 Ready Pointer 追赶 DMA Write Pointer，
+     * 期间所有新接收 Byte 依次送入 CRSF Parser。
+     */
     while(s_read_ptr != write_ptr)
     {
         ELRS_StateMachine(s_dma_rx_buf[s_read_ptr]);
-        s_read_ptr = (s_read_ptr + 1) % DMA_BUF_SIZE;
+        s_read_ptr = 
+            (uint16_t)(s_read_ptr + 1) % DMA_BUF_SIZE;
     }
 
     CRSF_ParseFrame();
 
+    /*
+     * Link Failsafe 依据最近一条有效 RC Channel Frame 的 Age 判断。
+     * 
+     * 系统启动后尚未收到任何有效 RC Frame 时，
+     * link_ok 始终保持 false。
+     */
     uint32_t now = osKernelGetTickCount();
 
     s_rc_data.link_ok =
@@ -212,5 +324,10 @@ void ELRS_Poll(void)
 
 void ELRS_CopyTo(RCChannelData_t *out)
 {
+    if(out == NULL)
+    {
+        return;
+    }
+    
     *out = s_rc_data;
 }

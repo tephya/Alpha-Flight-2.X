@@ -1,3 +1,8 @@
+/**
+ * @file    app_rc_calibration.c
+ * @brief   RC 通道端点，中心位置采集及归一化映射实现。
+ */
+
 #include "app_rc_calibration.h"
 #include "app_shared_types.h"
 #include "app_mag_calibration.h"
@@ -8,9 +13,11 @@
 
 extern osMessageQueueId_t IndicatorEventQueueHandle;
 
+/* Config Flash 中 RC Calibration Record 的类型与版本。 */
 #define RC_CONFIG_RECORD_TYPE 0x0001U
 #define RC_CONFIG_VERSION 1U
 
+/* RC 通道索引。 */
 #define RC_CH_ROLL 0U
 #define RC_CH_PITCH 1U
 #define RC_CH_THROTTLE 2U
@@ -18,6 +25,12 @@ extern osMessageQueueId_t IndicatorEventQueueHandle;
 #define RC_CH_ARM_SWITCH 4U
 #define RC_CH_MODE_SWITCH 5U
 
+/*
+ * Calibration 触发与状态切换条件。
+ * 
+ * 进入手势要求 Disarmed，ARM Switch 关闭，Mode Switch 打开，
+ * 并将四个主控制通道保持在制定低端位置一段时间。
+ */
 #define RC_SWITCH_ON_THRESHOLD 1500U
 #define RC_ARM_SWITCH_OFF_MAX 900U
 #define RC_TRIGGER_LOW 300U
@@ -25,47 +38,71 @@ extern osMessageQueueId_t IndicatorEventQueueHandle;
 #define RC_TRIGGER_HOLD_MS 2000U
 #define RC_CAPTURE_MIN_MS 3000U
 #define RC_CAPTURE_TIMEOUT_MS 30000U
-#define RC_CENTER_HOLD_MS 1000U
+#define RC_CENTER_HOLD_MS 3000U
 #define RC_CENTER_TIMEOUT_MS 15000U
 
+/*
+ * Calibration 数据有效性门限。
+ * 
+ * 端点必须覆盖足够大的有效行程；
+ * 中心采样必须位于端点中部附近并在保持期间足够稳定。
+ */
 #define RC_MIN_FULL_SPAN 1400U
 #define RC_MIN_HALF_SPAN 300U
 #define RC_CENTER_WINDOW_COUNTS 200U
 #define RC_CENTER_STABILITY_COUNTS 12U
 #define RC_THROTTLE_LOW_MARGIN 60U
+
+/* 主控制通道统一映射到标准 CRSF 范围。 */
 #define RC_NORMALIZED_MIN 172U
 #define RC_NORMALIZED_MID 992U
 #define RC_NORMALIZED_MAX 1811U
 #define RC_NORMALIZED_DEADBAND 15U
 
+/*
+ * @brief   RC Calibration 状态。
+ */
 typedef enum
 {
-    RC_CAL_STATE_IDLE = 0,
-    RC_CAL_STATE_CAPTURE_RANGE,
-    RC_CAL_STATE_CAPTURE_CENTER,
+    RC_CAL_STATE_IDLE = 0,       /**< 空闲，等待进入手势。 */
+    RC_CAL_STATE_CAPTURE_RANGE,  /**< 采集四个主通道的最小值和最大值。 */
+    RC_CAL_STATE_CAPTURE_CENTER, /**< 采集 Roll/Pitch/Yaw 稳定中心位置。 */
 } RcCalibrationState_t;
 
-static RcCalibration_t s_calibration;
-static RcCalibration_t s_working;
-static RcCalibrationState_t s_state = RC_CAL_STATE_IDLE;
+static RcCalibration_t s_calibration;       // 当前实际生效的 RC Calibration 参数。
+static RcCalibration_t s_working;           // 当前一次 Calibration 正在构建的候选参数。
+
+static RcCalibrationState_t s_state = RC_CAL_STATE_IDLE;    
 static bool s_ready = false;
 
+/* 进入 Calibration 的长按手势状态。 */
 static bool s_entry_holding = false;
 static uint32_t s_entry_start_tick = 0U;
+
+/** 当前 Calibration State 的开始时间。 */
 static uint32_t s_state_start_tick = 0U;
 
+/* Center Capture 连续稳定窗口状态。 */
 static bool s_center_holding = false;
 static uint32_t s_center_start_tick = 0U;
 static uint32_t s_center_count = 0U;
+
 static uint32_t s_center_sum[RC_CAL_CHANNEL_COUNT];
 static uint16_t s_center_min[RC_CAL_CHANNEL_COUNT];
 static uint16_t s_center_max[RC_CAL_CHANNEL_COUNT];
 
+/* 非阻塞向 Indicator Task 发布 RC Calibration 状态事件。 */
 static void RcCalibration_PostEvent(IndicatorEvent_t evt)
 {
     (void)osMessageQueuePut(IndicatorEventQueueHandle, &evt, 0U, 0U);
 }
 
+/*
+ * 加载标准 CRSF 默认参数。
+ *
+ * 默认参数可以保证后续 RC Mapping 有合法输入，
+ * 但不代表用户已经完成实际遥控器 Calibration。
+ */
 static void RcCalibration_LoadDefaults(void)
 {
     for (uint8_t i = 0U; i < RC_CAL_CHANNEL_COUNT; i++)
@@ -79,6 +116,14 @@ static void RcCalibration_LoadDefaults(void)
     s_calibration.reserved = 0U;
 }
 
+/*
+ * 检查一份 RC Calibration 参数是否合法。
+ * 
+ * 每个通道必须满足：
+ * min < mid < max；
+ * 总行程和中心两侧行程均达到最小要求；
+ * 原始值不能超过 CRSF 11-bit 数据范围。
+ */
 static bool RcCalibration_DataValid(const RcCalibration_t *cal)
 {
     if(cal == NULL || cal->deadband > 100U)
@@ -105,6 +150,15 @@ static bool RcCalibration_DataValid(const RcCalibration_t *cal)
     return true;
 }
 
+/*
+ * 检查是否持续满足 RC Calibration 进入手势。
+ *
+ * 进入条件：
+ * - RC Link 正常；
+ * - ARM Switch 关闭；
+ * - Mode Switch 打开；
+ * - Throttle、Roll、Pitch、Yaw 均位于低端。
+ */
 static bool RcCalibration_EntryGasture(const RCChannelData_t *rc)
 {
     return rc->link_ok &&
@@ -116,11 +170,13 @@ static bool RcCalibration_EntryGasture(const RCChannelData_t *rc)
            rc->channels[RC_CH_YAW] <= RC_TRIGGER_LOW;   // 这里应该是LOW，才对应RC-YAW的左自旋方向——即向左拨动Yaw摇杆
 }
 
+/* 清除 Center Capture 当前连续稳定窗口。 */
 static void RcCalibration_ResetCenterAccumulator(void)
 {
     s_center_holding = false;
     s_center_start_tick = 0U;
     s_center_count = 0U;
+
     memset(s_center_sum, 0, sizeof(s_center_sum));
 
     for (uint8_t i = 0U; i < RC_CAL_CHANNEL_COUNT; i++)
@@ -130,18 +186,31 @@ static void RcCalibration_ResetCenterAccumulator(void)
     }
 }
 
+/*
+ * 取消当前 RC Calibration。
+ * 
+ * 只有真正进入 Calibration State 后被取消时才发布 Failed Event；
+ * IDLE 阶段尚未完成的触发手势不会被视为一次失败校准。
+ */
 static void RcCalibration_Cancel(void)
 {
     bool was_active = (s_state != RC_CAL_STATE_IDLE);
 
     s_state = RC_CAL_STATE_IDLE;
     s_entry_holding = false;
+
     RcCalibration_ResetCenterAccumulator();
 
     if(was_active)
         RcCalibration_PostEvent(EVT_RC_CALIB_FAILED);
 }
 
+/*
+ * 开始一次新的 Range Capture。
+ * 
+ * 当前 RC 值同时作为每个通道初始 Min/Max，
+ * 后续在整个 Capture Range 阶段持续扩展端点范围。
+ */
 static void RcCalibration_BeginCapture(const RCChannelData_t *rc, uint32_t now)
 {
     memset(&s_working, 0, sizeof(s_working));
@@ -150,17 +219,26 @@ static void RcCalibration_BeginCapture(const RCChannelData_t *rc, uint32_t now)
     {
         s_working.min[i] = rc->channels[i];
         s_working.max[i] = rc->channels[i];
+
+        /*
+         * Range Capture 阶段尚未测量真实中心，
+         * 暂时填入标准 CRSF Mid，最终由 Center Capture 覆盖。
+         */
         s_working.mid[i] = RC_NORMALIZED_MID;
     }
 
     s_working.deadband = RC_NORMALIZED_DEADBAND;
+
     s_state = RC_CAL_STATE_CAPTURE_RANGE;
     s_state_start_tick = now;
     s_entry_holding = false;
+
     RcCalibration_ResetCenterAccumulator();
+
     RcCalibration_PostEvent(EVT_RC_CALIB_STARTED);
 }
 
+/* 使用当前 RC Sample 更新四个主通道的最小值和最大值。 */
 static void RcCalibration_UpdateRanges(const RCChannelData_t *rc)
 {
     for (uint8_t i = 0U; i < RC_CAL_CHANNEL_COUNT; i++)
@@ -173,6 +251,7 @@ static void RcCalibration_UpdateRanges(const RCChannelData_t *rc)
     }
 }
 
+/* 检查所有主控制通道是否已经覆盖足够大的端点范围。 */
 static bool RcCalibration_RangesValid(void)
 {
     for (uint8_t i = 0U; i < RC_CAL_CHANNEL_COUNT; i++)
@@ -187,6 +266,15 @@ static bool RcCalibration_RangesValid(void)
     return true;
 }
 
+/*
+ * 检查当前摇杆姿态是否适合开始 Center Capture。
+ *
+ * Throttle 必须保持在已采集最低点附近；
+ * Roll/Pitch/Yaw 必须位于各自 Min/Max 几何中点附近。
+ *
+ * 这里的 Rough Mid 只用于判断飞手是否大致回中，
+ * 最终真实 Mid 由后续稳定窗口的平均值计算。
+ */
 static bool RcCalibration_CenterPosePlausible(const RCChannelData_t *rc)
 {
     if(rc->channels[RC_CH_THROTTLE] >
@@ -195,13 +283,18 @@ static bool RcCalibration_CenterPosePlausible(const RCChannelData_t *rc)
         return false;
     }
 
-    const uint8_t centered_axes[] = {RC_CH_ROLL, RC_CH_PITCH, RC_CH_YAW};
+    const uint8_t centered_axes[] = {
+        RC_CH_ROLL,
+        RC_CH_PITCH,
+        RC_CH_YAW};
 
     for (uint8_t i = 0U; i < sizeof(centered_axes); i++)
     {
         uint8_t ch = centered_axes[i];
+
         uint16_t rough_mid = (uint16_t)(((uint32_t)s_working.min[ch] +
                                          (uint32_t)s_working.max[ch]) / 2U);
+
         int32_t error = (int32_t)rc->channels[ch] - (int32_t)rough_mid;
         
         if(error < -(int32_t)RC_CENTER_WINDOW_COUNTS || 
@@ -214,17 +307,29 @@ static bool RcCalibration_CenterPosePlausible(const RCChannelData_t *rc)
     return true;
 }
 
+/*
+ * 将当前 Roll/Pitch/Yaw Sample 加入 Center Capture 窗口，
+ * 并检查整个连续窗口内的摇杆抖动是否仍满足稳定门限。
+ *
+ * 任一轴 Max-Min 超限即认为本段中心保持不稳定，
+ * 调用方会清空窗口并重新开始累计。
+ */
 static bool RcCalibration_CenterStillStable(const RCChannelData_t *rc)
 {
-    const uint8_t centered_axes[] = {RC_CH_ROLL, RC_CH_PITCH, RC_CH_YAW};
+    const uint8_t centered_axes[] = {
+        RC_CH_ROLL,
+        RC_CH_PITCH,
+        RC_CH_YAW};
 
     for (uint8_t i = 0U; i < sizeof(centered_axes); i++)
     {
         uint8_t ch = centered_axes[i];
+
         uint16_t value = rc->channels[ch];
 
         if(value < s_center_min[ch])
             s_center_min[ch] = value;
+
         if(value > s_center_max[ch])
             s_center_max[ch] = value;
 
@@ -240,6 +345,16 @@ static bool RcCalibration_CenterStillStable(const RCChannelData_t *rc)
     return true;
 }
 
+/*
+ * 根据稳定 Center Capture 窗口生成最终 Calibration。
+ *
+ * Roll/Pitch/Yaw Mid 使用稳定窗口平均值；
+ * Throttle 没有物理回中位置，因此其 Mid 仅取 Min/Max 几何中点，
+ * 用于保持统一的分段线性映射结构。
+ *
+ * 只有参数校验和 Config Flash 写入均成功后，
+ * 新 Calibration 才正式替换当前运行参数。
+ */
 static void RcCalibration_TryFinish(void)
 {
     if(s_center_count == 0U)
@@ -263,7 +378,7 @@ static void RcCalibration_TryFinish(void)
         return;
     }
 
-    ConfigFlashStatus_t result = BSP_ConfigFlash_Append(
+    const ConfigFlashStatus_t result = BSP_ConfigFlash_Append(
         RC_CONFIG_RECORD_TYPE,
         RC_CONFIG_VERSION,
         &s_working,
@@ -279,11 +394,29 @@ static void RcCalibration_TryFinish(void)
     s_calibration = s_working;
     s_ready = true;
     s_state = RC_CAL_STATE_IDLE;
+
     RcCalibration_ResetCenterAccumulator();
+
     RcCalibration_PostEvent(EVT_RC_CALIB_SUCCESS);
 }
 
-static uint16_t RcCalibration_MapAxis(uint16_t raw, uint16_t raw_min, uint16_t raw_mid, uint16_t raw_max)
+/*
+ * 将一个原始 RC 通道按 Min-Mid-Max 分成两段线性映射到标准 CRSF 范围。
+ *
+ * 分段映射保留实际遥控器的中心位置：
+ *
+ * raw_min -> 172
+ * raw_mid -> 992
+ * raw_max -> 1811
+ *
+ * 因此即使原始通道上下行程不完全对称，
+ * 映射后的中心仍严格落在标准 CRSF Mid。
+ */
+static uint16_t RcCalibration_MapAxis(
+    uint16_t raw,
+    uint16_t raw_min,
+    uint16_t raw_mid,
+    uint16_t raw_max)
 {
     if(raw <= raw_min)
         return RC_NORMALIZED_MIN;
@@ -304,13 +437,20 @@ static uint16_t RcCalibration_MapAxis(uint16_t raw, uint16_t raw_min, uint16_t r
 
 void RcCalibration_Init(void)
 {
+    /*
+     * 无论 Flash 中是否存在有效记录，
+     * 都先建立一套可安全使用的标准 CRSF 默认映射。
+     */
     RcCalibration_LoadDefaults();
+
     s_ready = false;
     s_state = RC_CAL_STATE_IDLE;
     s_entry_holding = false;
+
     RcCalibration_ResetCenterAccumulator();
 
     RcCalibration_t stored;
+
     ConfigFlashStatus_t result = BSP_ConfigFlash_LoadLatest(
         RC_CONFIG_RECORD_TYPE,
         RC_CONFIG_VERSION,
@@ -318,6 +458,10 @@ void RcCalibration_Init(void)
         sizeof(stored),
         NULL);
 
+    /*
+     * 只有 Flash Record 与参数内容都合法时才正式启用持久化结果。
+     * 否则继续使用默认 Mapping，但保持 Not Ready。
+     */
     if(result == CONFIG_FLASH_OK && RcCalibration_DataValid(&stored))
     {
         s_calibration = stored;
@@ -330,15 +474,26 @@ void RcCalibration_Update(const RCChannelData_t *raw_rc)
     if(raw_rc == NULL)
         return;
 
+    /*
+     * Mag Calibration 需要翻转机体进行采样，
+     * 不允许与 RC Calibration 同时运行。
+     */
     if(MagCalibration_IsActive())
     {
-        /* Mag校准翻转机体期间不允许另一状态机并行运行 */
         RcCalibration_Cancel();
         return;
     }
 
     uint32_t now = osKernelGetTickCount();
     
+    /*
+     * RC Calibration 全过程必须保持：
+     * - Disarmed；
+     * - RC link 正常；
+     * - ARM Switch 关闭。
+     * 
+     * 任一条件失效立即取消当前校准。
+     */
     if(g_arm_state != ARM_STATE_DISARMED || !raw_rc->link_ok ||
         raw_rc->channels[RC_CH_ARM_SWITCH] > RC_ARM_SWITCH_OFF_MAX)
     {
@@ -349,14 +504,19 @@ void RcCalibration_Update(const RCChannelData_t *raw_rc)
     switch (s_state)
     {
     case RC_CAL_STATE_IDLE:
-        if(RcCalibration_EntryGasture(raw_rc))
+    {
+        /*
+         * 接你手势必须连续保持制定时间，
+         * 防止正常操作偶然经过触发位置时误启动 Calibration。
+         */
+        if (RcCalibration_EntryGasture(raw_rc))
         {
-            if(!s_entry_holding)
+            if (!s_entry_holding)
             {
                 s_entry_holding = true;
                 s_entry_start_tick = now;
             }
-            else if((now - s_entry_start_tick) >= RC_TRIGGER_HOLD_MS)
+            else if ((now - s_entry_start_tick) >= RC_TRIGGER_HOLD_MS)
             {
                 RcCalibration_BeginCapture(raw_rc, now);
             }
@@ -366,20 +526,30 @@ void RcCalibration_Update(const RCChannelData_t *raw_rc)
             s_entry_holding = false;
         }
         break;
+    }
     
     case RC_CAL_STATE_CAPTURE_RANGE:
+    {
+        /*
+         * Range Capture 阶段要求飞手充分移动四个主控制通道，
+         * 持续记录每个通道观察到的 Min/Max。
+         */
         RcCalibration_UpdateRanges(raw_rc);
 
-        if((now - s_state_start_tick) >= RC_CAPTURE_TIMEOUT_MS)
+        if ((now - s_state_start_tick) >= RC_CAPTURE_TIMEOUT_MS)
         {
             RcCalibration_Cancel();
             break;
         }
 
-        if((now - s_state_start_tick) >= RC_CAPTURE_MIN_MS &&
+        /*
+         * 至少采集一段时间后，Mode Switch 关闭表示飞手主动结束
+         * Range Capture 并准备进入 Center Capture。
+         */
+        if ((now - s_state_start_tick) >= RC_CAPTURE_MIN_MS &&
             raw_rc->channels[RC_CH_MODE_SWITCH] < RC_SWITCH_ON_THRESHOLD)
         {
-            if(!RcCalibration_RangesValid())
+            if (!RcCalibration_RangesValid())
             {
                 RcCalibration_Cancel();
                 return;
@@ -390,35 +560,47 @@ void RcCalibration_Update(const RCChannelData_t *raw_rc)
             RcCalibration_ResetCenterAccumulator();
         }
         break;
+    }
 
     case RC_CAL_STATE_CAPTURE_CENTER:
-        if((now - s_state_start_tick) >= RC_CENTER_TIMEOUT_MS)
+    {
+        if ((now - s_state_start_tick) >= RC_CENTER_TIMEOUT_MS)
         {
             RcCalibration_Cancel();
             break;
         }
 
-        if(!RcCalibration_CenterPosePlausible(raw_rc))
+        /*
+         * Throttle 未回到底部或三轴摇杆明显偏离中心时，
+         * 当前稳定窗口作废，但仍继续等待新的正确 Center Pose。
+         */
+        if (!RcCalibration_CenterPosePlausible(raw_rc))
         {
             RcCalibration_ResetCenterAccumulator();
             break;
         }
 
-        if(!s_center_holding)
+        if (!s_center_holding)
         {
             s_center_holding = true;
             s_center_start_tick = now;
         }
 
-        if(!RcCalibration_CenterStillStable(raw_rc))
+        /*
+         * Center Hold 期间任一轴抖动范围超限，
+         * 当前连续稳定窗口重新开始。
+         */
+        if (!RcCalibration_CenterStillStable(raw_rc))
         {
             RcCalibration_ResetCenterAccumulator();
             break;
         }
 
-        if((now - s_center_start_tick) >= RC_CENTER_HOLD_MS)
+        if ((now - s_center_start_tick) >= RC_CENTER_HOLD_MS)
             RcCalibration_TryFinish();
+
         break;
+    }
 
     default:
         RcCalibration_Cancel();
@@ -431,6 +613,10 @@ void RcCalibration_Apply(RCChannelData_t *rc)
     if(rc == NULL)
         return;
 
+    /*
+     * 将四个主控制通道分别按照各自实际 Min/Mid/Max
+     * 映射回统一的标准 CRSF 范围。
+     */
     for (uint8_t i = 0U; i < RC_CAL_CHANNEL_COUNT; i++)
     {
         rc->channels[i] = RcCalibration_MapAxis(rc->channels[i],
@@ -439,13 +625,25 @@ void RcCalibration_Apply(RCChannelData_t *rc)
                                                 s_calibration.max[i]);
     }
 
-    /* Roll/Pitch/Yaw的中心抖动统一压到精确中心值。
-     * Throttle不设中心死区，避免破坏油门的连续性。 */
-    const uint8_t centered_axes[] = {RC_CH_ROLL, RC_CH_PITCH, RC_CH_YAW};
+    /*
+     * Roll/Pitch/Yaw 在归一化后应用中心 Deadband，
+     * 将中心附近的小幅摇杆噪声统一吸附到标准 Mid。
+     * 
+     * Throttle 不使用中心 Deadband，
+     * 避免破坏整个油门行程的连续性。
+     */
+    const uint8_t centered_axes[] = {
+        RC_CH_ROLL,
+        RC_CH_PITCH,
+        RC_CH_YAW};
+
     for (uint8_t i = 0U; i < (uint8_t)sizeof(centered_axes); i++)
     {
-        uint8_t ch = centered_axes[i];
-        int32_t center_error = (int32_t)rc->channels[ch] - (int32_t)RC_NORMALIZED_MID;
+        const uint8_t ch = centered_axes[i];
+
+        const int32_t center_error = 
+            (int32_t)rc->channels[ch] - 
+            (int32_t)RC_NORMALIZED_MID;
 
         if(center_error >= -(int32_t)s_calibration.deadband &&
             center_error <= (int32_t)s_calibration.deadband)

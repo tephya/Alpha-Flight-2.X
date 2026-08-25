@@ -1,39 +1,72 @@
+/**
+ * @file    bsp_dshot.c
+ * @brief   基于 TIM1 PWM + DMA Burst 的四路 DShot600 输出实现。
+ */
+
 #include "bsp_dshot.h"
 #include "tim.h"
 
-/*=============================================================
- * DSHOT600 四路输出(PA8/PA9/PA10/PA11 = TIM1 CH1~CH4)
- * TIM1_UP事件触发DMA2_Stream5 burst，一次写入CCR1~CCR4四个寄存器
- *=============================================================*/
+/*
+ * DShot600 输出链路：
+ * 
+ * TIM1 CH1~CH4 对应四路 Motor Output。
+ * 每个 TIM1 Update Event 触发一次 DMA Burst，
+ * 连续写入 CCR1~CCR4，使四路电机在同一个 DShot Bit 周期内同步更新。
+ * 
+ * 当前 TIM1 配置下，每个 DShot Bit 占 280 个 Timer Count。
+ */
+ #define DSHOT_BIT_0 105U       // Logic 0 High Time：37.5% Duty。
+ #define DSHOT_BIT_1 210U       // Logic 1 High Time：75% Duty。
+ #define DSHOT_FRAME_LEN 18U    // 16 个 Data Bit + 2 个低电平 Padding 周期。
+ #define DSHOT_CHANNELS 4U      // 四路同步 DShot 输出。
 
- #define DSHOT_BIT_0 105U       // 37.5% duty = 625ns @168MHz/280
- #define DSHOT_BIT_1 210U       // 75% duty = 1250ns
- #define DSHOT_FRAME_LEN 18U    // 16 data bits + 2 padding
- #define DSHOT_CHANNELS 4U
-
-/**
- * DMA burst缓冲区，注意：元素类型必须是uint16_t——实际传输粒度由
- * CubeMX里hdma_tim1_up.Init.MemDataAlignment=DMA_MDATAALIGN_HALFWORD决定，
- * 跟HAL_TIM_DMABurst_MultiWriteStart()函数原型接收uint32_t*无关，
- * 调用时强转指针类型即可，缓存区本身不能声明为uint32_t，否则实际发出去的半子数据会错位。
+/*
+ * DMA Burst Buffer 按以下顺序排列：
+ *
+ * [bit15_CH1][bit15_CH2][bit15_CH3][bit15_CH4]
+ * [bit14_CH1][bit14_CH2][bit14_CH3][bit14_CH4]
+ * ...
+ * [bit0_CH1 ][bit0_CH2 ][bit0_CH3 ][bit0_CH4 ]
+ * [padding...]
+ * 
+ * 每个 TIM1 Update Event 通过 DMA Burst 连续更新 CCR1~CCR4。
+ * 
+ * DMA Memory Data Alignment 配置为 Halfword，因此 Buffer 元素必须保持
+ * uint16_t。HAL_DMABurst_MultiWriteStart() 的 Buffer 参数虽然声明为
+ * uint32_t *，这里的强制转换仅用于适配 HAL API，不改变实际 DMA 传输粒度。 
  */
 #pragma arm section zidata = "DMA_SAFE_SRAM"
+
 static uint16_t s_dshot_buf[DSHOT_FRAME_LEN * DSHOT_CHANNELS];
+
 #pragma arm section zidata
 
-/**
- * @brief   编码单通道DSHOT数据帧并计算 CRC 校验码
- * @note    DSHOT数据帧共16bit：11 data bits + 1bit Tele + 4bit CRC
- * @param   payload 原始油门输入值
- * @retval  经过CRC计算和移位拼接后的完整油门数据帧
+/*
+ * 将单路 11-bit Payload 编码为完整 16-bit DShot Frame：
+ * 
+ * [11-bit Payload][1-bit Telemetry][4-bit CRC]
+ * 
+ * 当前不请求 ESC Telemetry，因此 Telemetry Bit 固定为 0。
  */
 static uint16_t DSHOT_EncodeFrame(uint16_t payload)
 {
-    uint16_t val = (uint16_t)((payload << 1) | 0U);     // bit0: Telemetry = 0
-    uint16_t crc = (uint16_t)((val ^ (val >> 4) ^ (val >> 8)) & 0x0FU);
+    uint16_t val = (uint16_t)((payload << 1) | 0U);
+
+    uint16_t crc =
+        (uint16_t)((val ^
+                    (val >> 4) ^
+                    (val >> 8)) &
+                   0x0FU);
+
     return (uint16_t)((val << 4) | crc);
 }
 
+/*
+ * 将四路 DShot Frame 展开为 DMA Burst Buffer。
+ * 
+ * DShot 按 MSB First 发送，每个 Bit 对应四个 CCR 值：
+ * Buffer 尾部追加两个全 0 周期，使四路输出保持低电平形成帧瞬间。
+ */
 static void DSHOT_FillBuffer(uint16_t p1, uint16_t p2, uint16_t p3, uint16_t p4)
 {
     uint16_t frame[DSHOT_CHANNELS];
@@ -44,15 +77,28 @@ static void DSHOT_FillBuffer(uint16_t p1, uint16_t p2, uint16_t p3, uint16_t p4)
 
     for (uint32_t bit = 0; bit < 16U; bit++)
     {
-        uint32_t base = bit * DSHOT_CHANNELS;
+        uint32_t base = 
+            bit * DSHOT_CHANNELS;
+
         for (uint32_t ch = 0; ch < DSHOT_CHANNELS; ch++)
         {
-            s_dshot_buf[base + ch] = ((frame[ch] >> (15U - bit)) & 1U) 
-                                    ? DSHOT_BIT_1 : DSHOT_BIT_0;
+            /*
+             * 从 bit15 到 bit0 依次展开。
+             * 
+             * Logic 1 / 0 通过不同 CCR 值改变 PWM High Time，
+             * Bit 周期本身保持不变。
+             */
+            s_dshot_buf[base + ch] = 
+                ((frame[ch] >> (15U - bit)) & 1U) 
+                    ? DSHOT_BIT_1 
+                    : DSHOT_BIT_0;
         }
     }
 
-    // 末尾2个padding周期，四路全0，形成帧间隔
+    /*
+     * 最后两个 Bit 周期四路 CCR 全部置 0，
+     * 保持输出低电平并形成 DShot Frame 间隔。
+     */
     for (uint32_t pad = 16U; pad < DSHOT_FRAME_LEN; pad++)
     {
         uint32_t base = pad * DSHOT_CHANNELS;
@@ -61,56 +107,60 @@ static void DSHOT_FillBuffer(uint16_t p1, uint16_t p2, uint16_t p3, uint16_t p4)
     }
 }
 
-
-
-/**
- * @brief   初始化DSHOT600四路输出
- * @note    TIM1/DMA2_Stream5的始终、GPIO、PWM通道、hdma_tim1_up均已由CubeMX生成，
- *          这里只负责启动PWM通道输出和清空burst buffer，
- *          必须在第一次调用BSP_DSHOT_Send前调用一次
- */
 void BSP_DSHOT_Init(void)
 {
+    /*
+     * 启动前清空整个 DMA Buffer，
+     * 保证尚未发送有效 Frame 时 CCR 更新数据均为 0。
+     */
     for (uint32_t i = 0; i < DSHOT_FRAME_LEN * DSHOT_CHANNELS; i++)
         s_dshot_buf[i] = 0;
 
-    /**
-     * MX_TIM1_Init只做了Base/PWM通道配置和Break/DeadTime配置，没有真正启动输出
-     * HAL_TIM_PWM_Start对Break型定时器(TIM1)会顺带使能MOE位
-     * 否则BDTR.AutomaticOutput=DISABLE的情况下CCR再怎么变化外部引脚也不会翻转
+    /*
+     * CubeMX 只完成 TIM1 Base / PWM / Break-DeadTime 等参数配置，
+     * PWM Channel 仍需要显式 Start 才会真正输出。
+     * 
+     * TIM1 属于 Advanced-control Timer，
+     * HAL_TIM_PWM_Start() 同时会处理 Main Output Enable，
+     * 使 CH1~CH4 的 PWM 波形能够实际输出到引脚。
      */
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
+    (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+    (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+    (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+    (void)HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
 }
 
-/**
- * @brief   编码并发送一帧DSHOT600数据到四路电机
- * @note    纯执行层：不做ARM判断、不做偏移映射，四个入参直接当做DSHOT 11-bit payload编码。
- *          payload=0表示停转指令；48~2047为有效油门区间；
- *          1~47是协议保留区间，调用方不应传入。
- *          是否解锁、要不要加48偏移，是由调用方(ARM状态机)决定后传入成品值
- */
 void BSP_DSHOT_Send(uint16_t p1, uint16_t p2, uint16_t p3, uint16_t p4)
 {
     DSHOT_FillBuffer(p1, p2, p3, p4);
 
-    /**
-     * 上一帧DMA若还没发完就先停掉再重启。DSHOT600单帧总时长约30us，
-     * 远小于800Hz(1.25ms)控制周期，正常情况这里不会真的碰到BUSY，
-     * 只是给异常场景留个非阻塞的兜底，不采用旧代码那种忙等到DMA停稳的写法
+    /*
+     * 正常情况下，上一帧 DMA 应在下一次控制周期到来前早已完成。
+     * 
+     * 若异常情况下 DMA Burst 仍处于 Busy，则先停止旧传输，
+     * 再发送最新的一帧，避免在实时控制路径中 Busy Wait。
      */
     if(htim1.DMABurstState != HAL_DMA_STATE_READY)
     {
-        HAL_TIM_DMABurst_WriteStop(&htim1, TIM_DMA_UPDATE);
+        (void)HAL_TIM_DMABurst_WriteStop(&htim1, TIM_DMA_UPDATE);
     }
 
+    /*
+     * TIM1 Update Event 每触发一次 DMA Burst，
+     * 按 CCR1 -> CCR4 连续写入四个 Halfword。
+     * 
+     * 18 组 Burst 对应：
+     * 16 个 DShot Data Bit + 2 个 Padding 周期。
+     */
     if(HAL_TIM_DMABurst_MultiWriteStart(&htim1, TIM_DMABASE_CCR1, TIM_DMA_UPDATE,
                                      (uint32_t *)s_dshot_buf,
                                      TIM_DMABURSTLENGTH_4TRANSFERS,
                                      DSHOT_FRAME_LEN * DSHOT_CHANNELS) != HAL_OK)
     {
-        // TODO: 计数或丢进心跳/黑匣子，统计实际丢帧率，方便以后判断这条链路的健康度
+        /*
+         * TODO：
+         * 记录 DShot DMA 启动失败次数，并纳入 Blackbox / Health 诊断，
+         * 用于统计实际 Motor Command 丢帧情况。
+         */
     }
 }

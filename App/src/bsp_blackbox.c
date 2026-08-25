@@ -1,3 +1,8 @@
+/**
+ * @file    bsp_blackbox.c
+ * @brief   Blackbox 二进制日志双缓冲及 FatFS 写盘实现。
+ */
+
 #include "bsp_blackbox.h"
 #include "bsp_sdcard.h"
 #include "cmsis_os2.h"
@@ -6,44 +11,72 @@
 #include <stdio.h>
 #include <string.h>
 
-/* 200Hz CONTROL V4日志约18KB/s。4KB双缓冲可吸收约455ms的SD卡短时停顿，
- * 同时使用整扇区倍数写盘，减少512-byte双缓冲过小导致的瞬时溢出。 */
+/*
+ * Blackbox RAM Buffer 大小。
+ *
+ * Control V4 以约 200 Hz 记录时数据率约为 18 KB/s。
+ * 4 KB 双缓冲能够吸收一定程度的 SD Card 短时写入停顿，
+ * 同时保持每次完整块写入为 512 B Sector 的整数倍。
+ */
 #define LOG_BUF_SIZE 4096U
 
-/*====== 各记录类型的实际大小(含MAGIC + type + 内容), __packed保证紧凑 ======*/
+/*
+ * 以下 Record Struct 即为实际写入文件的二进制布局。
+ *
+ * 每条记录均以 MAGIC + TYPE 开头，
+ * 并使用 Packed Layout 保证 MCU 与离线解析器看到完全一致的字节排列。
+ */
+
+/**
+ * @brief Motion Record。
+ */
 typedef __packed struct
 {
-    uint8_t magic;      // BB_FRAME_MAGIC，帧同步用
-    uint8_t type;       // BB_REC_MOTION
-    uint16_t time_ms;
-    int16_t angle_cdeg[3];  // roll/pitch/yaw，0.01°定点
-    uint16_t motor[4];
-    int8_t target_cdeg[3];
-} BB_MotionRec_t;       // total = 21Bytes
+    uint8_t magic;         /**< BB_FRAME_MAGIC。 */
+    uint8_t type;          /**< BB_REC_MOTION。 */
+    uint16_t time_ms;      /**< 时间戳，ms。 */
+    int16_t angle_cdeg[3]; /**< Roll/Pitch/Yaw，0.01 deg。 */
+    uint16_t motor[4];     /**< 四路 Motor Output。 */
+    int8_t target_cdeg[3]; /**< Roll/Pitch/Yaw Target，0.01 deg。 */
+} BB_MotionRec_t;
 
+/**
+ * @brief Arm 状态变化 Record。
+ */
 typedef __packed struct
 {
     uint8_t magic;
     uint8_t type;
     uint16_t time_ms;
     uint8_t armed;
-} BB_ArmChangedRec_t;   // total = 5Bytes
+} BB_ArmChangedRec_t;
 
+/**
+ * @brief 无附加 Payload 的 Fault Record。
+ *
+ * Dual Fault 与 Voltage Fault 通过 Type 区分。
+ */
 typedef __packed struct
 {
     uint8_t magic;
     uint8_t type;
     uint16_t time_ms;
-} BB_FaultRec_t;        // total = 4Bytes, DualFault/VoltageFault共用
+} BB_FaultRec_t;
 
+/**
+ * @brief Active IMU 切换 Record。
+ */
 typedef __packed struct
 {
     uint8_t magic;
     uint8_t type;
     uint16_t time_ms;
     uint8_t new_active_imu;
-} BB_ImuSwitchRec_t;    // total = 5Bytes
+} BB_ImuSwitchRec_t;
 
+/**
+ * @brief Control V4 完整 Record。
+ */
 typedef __packed struct
 {
     uint8_t magic;
@@ -51,6 +84,9 @@ typedef __packed struct
     BB_ControlData_t data;
 } BB_ControlRec_t;
 
+/**
+ * @brief Navigation V5 完整 Record。
+ */
 typedef __packed struct
 {
     uint8_t magic;
@@ -58,14 +94,20 @@ typedef __packed struct
     BB_NavigationData_t data;
 } BB_NavigationRec_t;
 
-typedef char BB_NavigationRecSizeMustBe76[
-    (sizeof(BB_NavigationRec_t) == 76U) ? 1 : -1
-];
+/*
+ * 编译期检查实际日志 Record Size。
+ *
+ * 修改 Payload 后如果忘记同步协议版本或解析器，
+ * 编译期 Size Check 会直接暴露格式变化。
+ */
 
-typedef char BB_ControlRecV4SizeMustBe90[
-    (sizeof(BB_ControlRec_t) == 90U) ? 1 : -1
-];
+typedef char BB_NavigationRecSizeMustBe76[(sizeof(BB_NavigationRec_t) == 76U) ? 1 : -1];
 
+typedef char BB_ControlRecV4SizeMustBe90[(sizeof(BB_ControlRec_t) == 90U) ? 1 : -1];
+
+/**
+ * @brief Mag Calibration 原始采样 Record。
+ */
 typedef __packed struct
 {
     uint8_t magic;
@@ -76,42 +118,63 @@ typedef __packed struct
     float mag_z_gauss;
 } BB_MagCalibrationRec_t;
 
-typedef char BB_MagCalibrationRecSizeMustBe18[
-    (sizeof(BB_MagCalibrationRec_t) == 18U) ? 1 : -1
-];
+typedef char BB_MagCalibrationRecSizeMustBe18[(sizeof(BB_MagCalibrationRec_t) == 18U) ? 1 : -1];
 
-/*====== 双缓冲消费状态(内部私有) ======*/
+/**
+ * @brief 单块 Blackbox Buffer 状态。
+ */
 typedef enum
 {
-    BB_BUF_FREE,
-    BB_BUF_FILLING,
-    BB_BUF_READY,
+    BB_BUF_FREE = 0, /**< 当前 Buffer 可供 Producer 使用。 */
+    BB_BUF_FILLING,  /**< Producer 正在向该 Buffer 写入 Record。 */
+    BB_BUF_READY,    /**< Buffer 已填满，等待 Consumer 写入 SD Card。 */
 } BB_BufferState_t;
 
-typedef struct 
+/**
+ * @brief 单块 Blackbox RAM Buffer。
+ */
+typedef struct
 {
-    uint8_t data[LOG_BUF_SIZE];
-    uint16_t pos;
-    volatile BB_BufferState_t state;
+    uint8_t data[LOG_BUF_SIZE];      /**< 原始日志字节。 */
+    uint16_t pos;                    /**< 当前已使用字节数。 */
+    volatile BB_BufferState_t state; /**< Producer / Consumer 共享状态。 */
 } BB_Buffer_t;
 
 static FATFS s_fs;
 static FIL s_fil;
 
+/*
+ * Blackbox 双缓冲放置在指定 SRAM 区域。
+ */
 #pragma arm section zidata = "DMA_SAFE_SRAM"
-static BB_Buffer_t s_buf[2];        // 创建双缓冲区
+
+static BB_Buffer_t s_buf[2];
+
 #pragma arm section zidata
-static uint8_t s_fillIndex = 0;
+
+/** 当前 Producer 正在填充的 Buffer Index。 */
+static uint8_t s_fillIndex = 0U;
+
+/** Ready Buffer 通知 Blackbox Consumer 的 Semaphore。 */
 static osSemaphoreId_t s_dataReadySem = NULL;
+
+/** File Open / Close 控制请求 EventFlags。 */
 static osEventFlagsId_t s_ctrlEvt = NULL;
 
-static volatile uint8_t s_overflowFlag = 0;
-static volatile uint8_t s_writeErrorFlag = 0;
+/** 运行期间是否发生过双缓冲 Overflow。 */
+static volatile uint8_t s_overflowFlag = 0U;
 
-/**
- * @brief   把fill_index切到另一块空闲缓冲区，当前块标记READY并唤醒消费者
- * @retval  -1 : 另一块也没被消费完，发生一处(本次数据丢弃)
- *           0 : 成功
+/** 运行期间是否发生过 SD Write Error。 */
+static volatile uint8_t s_writeErrorFlag = 0U;
+
+/*
+ * 发布当前已填满的 Buffer，并切换到另一块 Free Buffer。
+ *
+ * 双缓冲中只有另一块已经被 Consumer 回收为 Free，
+ * Producer 才能继续写入。
+ *
+ * @return 0  切换成功。
+ * @return -1 另一块 Buffer 尚未消费，当前新数据无法继续写入。
  */
 static int8_t BB_PublishCurrentBlock(void)
 {
@@ -124,6 +187,7 @@ static int8_t BB_PublishCurrentBlock(void)
     }
 
     s_buf[s_fillIndex].state = BB_BUF_READY;
+
     osSemaphoreRelease(s_dataReadySem);
 
     s_fillIndex = next;
@@ -133,10 +197,17 @@ static int8_t BB_PublishCurrentBlock(void)
     return 0;
 }
 
-/**
- * @brief   把一条记录的原始字节写入当前缓冲区，跨缓冲区边界自动触发Publish
- * @note    Publish失败时回滚本条记录已写入的部分，保证文件中不会留下残帧。
- *          当前所有记录均小于LOG_BUF_SIZE，因此一次记录最多跨越一个边界。
+/*
+ * 将一条完整 Record 的原始字节写入双缓冲。
+ *
+ * Record 可以跨越当前 Buffer 边界：
+ * 当前块填满后先 Publish，再继续写入下一块。
+ *
+ * 若跨边界时无法取得下一块 Free Buffer，则回滚本条 Record
+ * 在当前 Buffer 中已经写入的字节，保证日志文件中不会留下残缺 Record。
+ *
+ * 当前所有 Record Size 均小于 LOG_BUF_SIZE，
+ * 因此单条 Record 最多跨越一次 Buffer Boundary。
  */
 static int8_t BB_WriteBytes(const uint8_t *src, uint16_t len)
 {
@@ -162,8 +233,13 @@ static int8_t BB_WriteBytes(const uint8_t *src, uint16_t len)
         {
             if(BB_PublishCurrentBlock() != 0)
             {
-                /* Publish失败时fillIndex尚未切换，撤销本条记录已复制的部分。
-                 * 旧记录仍保持完整，下一次写入会从start_pos覆盖本次残留字节。 */
+                /*
+                 * Publish 失败时 Fill Index 尚未切换，
+                 * 因此直接恢复进入本条 Record 前的位置。
+                 * 
+                 * 之前已经完整写入的旧 Record 保持不变，
+                 * 下一次写入会从 start_pos 覆盖当前残留字节。
+                 */
                 s_buf[start_index].pos = start_pos;
                 return -1;
             }
@@ -172,23 +248,22 @@ static int8_t BB_WriteBytes(const uint8_t *src, uint16_t len)
     return 0;
 }
 
-/**
- * @brief   挂载SD卡文件系统 + 创建新日志文件(LOGxxx.BIN)
- * @note    内部调用BSP_SD_Init完成SD卡上电，成功后才尝试挂载FatFS。
- *          必须在调度器启动后、由Task_Blackbox调用(内部有阻塞操作)。
- * @retval  0 : 成功
- *         -1 : SD卡初始化/挂载失败
- *         -2 : 文件创建失败
- */
 int8_t BB_Init(void)
 {
     char filename[16];
     FILINFO fno;
     
+    /*
+     * 挂载当前 SD Card FatFS。
+     * 这里本身没有执行 BSP_SD_Init()，底层 SD 初始化必须由外部启动流程完成。
+     */
 	FRESULT res = f_mount(&s_fs, "", 1);
     if(res != FR_OK)
         return -1;
 
+    /*
+     * 搜索首个未被占用的 LOSxxx.BIN 文件名。
+     */
     for (int i = 0; i < 1000; i++)
     {
         snprintf(filename, sizeof(filename), "LOG%03d.BIN", i);
@@ -202,10 +277,6 @@ int8_t BB_Init(void)
     return 0;
 }
 
-/**
- * @brief   初始化双缓冲消费者状态，创建“缓冲区就绪”信号量
- * @note    须在BB_Init成功后、Task_Blackbox主循环开始前调用一次
- */
 void BB_BufferInit(void)
 {
     s_buf[0].pos = 0;
@@ -216,22 +287,24 @@ void BB_BufferInit(void)
 
     s_fillIndex = 0;
 
-    /* 只在第一次创建——现在每次重新解锁都会调用一次BB_BufferInit，
-     * 不加这个保护会导致每次解锁都新建一个信号量对象，旧对象没人释放，
-     * 长期运行下去会泄漏RTOS内核对象 */
+    /*
+     * Buffer Semaphore 只创建一次。
+     * 每次创建新日志文件都会重新初始化 Buffer State，
+     * 但不能反复创建新的 RTOS Kernel Object，否则会造成资源泄漏。
+     */
     if(s_dataReadySem == NULL)
-        s_dataReadySem = osSemaphoreNew(2, 0, NULL); // 最多两块缓冲同时待处理
+        s_dataReadySem = osSemaphoreNew(2, 0, NULL);
 
     s_overflowFlag = 0;
     s_writeErrorFlag = 0;
 }
 
-/**
- * @brief   创建控制请求用的事件对象，必须在第一次调用BB_RequestNewFile()/
- *          BB_PollControlRequest()之前调用一次(在Task_Blackbox一开始就调)
- */
 void BB_ControlInit(void)
 {
+    /*
+     * 控制 EventFlags 同样只创建一次，
+     * 必须在第一次 Request / Poll 之前完成初始化。
+     */
     if(s_ctrlEvt == NULL)
         s_ctrlEvt = osEventFlagsNew(NULL);
 }
@@ -314,34 +387,26 @@ int8_t BB_LogMagCalibration(uint32_t timestamp_cycle,
     return BB_WriteBytes((const uint8_t *)&rec, sizeof(rec));
 }
 
-/**
- * @brief   阻塞等待某个缓冲区被生产者填满、可以写盘
- * @param   timeout_ms  等待超时
- * @retval  0 : 有数据待写，应调用BB_Process()
- *         -1 : 超时，无数据
- */
 int8_t BB_WaitReady(uint32_t timeout_ms)
 {
     osStatus_t st = osSemaphoreAcquire(s_dataReadySem, timeout_ms);
     return (st == osOK) ? 0 : -1;
 }
 
-/**
- * @brief   消费一块READY状态的缓冲区，写入SD卡，更新缓冲区状态
- * @note    由Task_Blackbox在BB_WaitReady返回0后调用
- * @retval  0 : 本次没有数据要写
- *          1 : 本次处理了一块缓冲区
- */
 int8_t BB_Process(void)
 {
     int8_t index = -1;
     
+    /*
+     * 双缓冲最多同时存在两块 Ready Buffer，
+     * 每次调用只消费其中一块。
+     */
     if(s_buf[0].state == BB_BUF_READY)
         index = 0;
     else if(s_buf[1].state == BB_BUF_READY)
         index = 1;
     else
-        return 0;       // 两块都不是READY，本次没有数据要写
+        return 0;
 
     UINT bw;
     FRESULT result = f_write(&s_fil, s_buf[index].data, LOG_BUF_SIZE, &bw);
@@ -353,80 +418,98 @@ int8_t BB_Process(void)
     }
     else
     {
+        /*
+         * SD Write 失败后丢弃当前块并回收 Buffer，
+         * 避免 Consumer 永久卡在无法回收的错误状态。
+         * 
+         * writeErrorFlag 会保留本次数据完整性已经受损的事实。
+         */
         s_writeErrorFlag = 1;
-        s_buf[index].state = BB_BUF_FREE;       // 丢弃这一块，避免消费者卡死咋ERROR态无法回收
+
+        s_buf[index].pos = 0U;
+        s_buf[index].state = BB_BUF_FREE;
     }
 
-    return 1;       // 处理了一块，调用方应该再调一次，确认是否还有下一块待处理
+    /*
+     * 返回 1 表示本次确实消费了一块；
+     * 调用方可以继续调用，知道返回 0 为止。
+     */
+    return 1; 
 }
 
-/**
- * @brief   将当前未写满的尾部数据flush到SD卡并关闭文件
- * @retval  0 : 成功
- *         -1 : 写入失败/漏写数据
- *         -2 : 关闭文件失败
- */
 int8_t BB_Close(void)
 {
     uint16_t len = s_buf[s_fillIndex].pos;
 
+    /*
+     * READY Buffer 应由调用方在进入 BB_Close() 前通过 BB_Process()
+     * 全部消费完成；这里只负责当前 Filling Buffer 中不足整块的尾部数据。
+     */
     if(len > 0)
     {
         UINT written = 0;
-        FRESULT result = f_write(&s_fil, s_buf[s_fillIndex].data, len, &written);
+        const FRESULT result = f_write(&s_fil, s_buf[s_fillIndex].data, len, &written);
+        
         if(result != FR_OK || written != len)
         {
             f_close(&s_fil);
             return -1;
         }
+
         s_buf[s_fillIndex].pos = 0;
-        f_sync(&s_fil);
+
+        /*
+         * 将 FatFS Cache 明确同步到存储介质后再关闭文件。
+         */
+        if (f_sync(&s_fil) != FR_OK)
+        {
+            (void)f_close(&s_fil);
+            return -1;
+        }
     }
 
     return (f_close(&s_fil) == FR_OK) ? 0 : -2;
 }
 
-/**
- * @brief   查询运行期间是否发生过缓冲区溢出或写入错误
- * @retval  bit0=1: 曾发生缓冲区溢出(两块缓冲区都被占用，丢了数据)
- *          bit1=1: 层发生SD写入错误
- */
 uint8_t BB_GetErrorFlags(void)
 {
     uint8_t flags = 0;
+
     if(s_overflowFlag)
         flags |= (1U << 0);
+
     if(s_writeErrorFlag)
         flags |= (1U << 1);
+
     return flags;
 }
 
-/**
- * @brief   请求关闭当前日志文件(非阻塞，只置事件位)
- * @note    由app_arm.c在Armed->Disarmed的所有出口(正常落地/紧急disarm)调用
- */
 void BB_RequestClose(void)
 {
-    osEventFlagsSet(s_ctrlEvt, BB_CTRL_CLOSE_REQ);
+    if(s_ctrlEvt != NULL)
+    {
+        (void)osEventFlagsSet(s_ctrlEvt, BB_CTRL_CLOSE_REQ);
+    }
 }
 
-/**
- * @brief   请求开一个新日志文件(非阻塞，只置事件位)
- * @note    由app_arm.c在Disarmed->Armed解锁瞬间调用
- */
 void BB_RequestNewFile(void)
 {
-    osEventFlagsSet(s_ctrlEvt, BB_CTRL_NEWFILE_REQ);
+    if(s_ctrlEvt != NULL)
+    {
+        (void)osEventFlagsSet(s_ctrlEvt, BB_CTRL_NEWFILE_REQ);
+    }
 }
 
-/**
- * @brief   Task_Blackbox内部轮询控制请求用
- * @param   timeout_ms  0表示非阻塞立即返回，用于跟BB_WaitReady搭配轮询
- * @retval  非负值：命中的bit(BB_CTRL_CLOSE_REQ/BB_CTRL_NEWFILE_REQ其一或组合)
- *          负值(osFlagsErrorTimeout等)：本次没有待处理的请求
- */
 uint32_t BB_PollControlRequest(uint32_t timeout_ms)
 {
-    return osEventFlagsWait(s_ctrlEvt, BB_CTRL_CLOSE_REQ | BB_CTRL_NEWFILE_REQ,
-                            osFlagsWaitAny, timeout_ms);
+    if(s_ctrlEvt == NULL)
+    {
+        return osFlagsErrorResource;
+    }
+
+    return osEventFlagsWait(
+        s_ctrlEvt, 
+        BB_CTRL_CLOSE_REQ | BB_CTRL_NEWFILE_REQ,
+        osFlagsWaitAny, 
+        timeout_ms);
 }

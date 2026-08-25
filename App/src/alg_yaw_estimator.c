@@ -1,3 +1,11 @@
+/**
+ * @file    alg_yaw_estimator.c
+ * @brief   Gyro-Mag Yaw 状态估计器实现。
+ * 
+ * Gyro 积分提供高频航向动态，经过有效性检查的 Mag 航向
+ * 用于低频修正长期积分漂移。
+ */
+
 #include "alg_yaw_estimator.h"
 #include <math.h>
 #include <string.h>
@@ -7,44 +15,64 @@
     #define M_PI 3.14159265358979323846f
 #endif
 
-#define YAW_DEG_TO_RAD  0.01745329252f
-#define YAW_GYRO_SIGN   1.0f
+#define YAW_DEG_TO_RAD  0.01745329252f      // deg 到 rad 的转换系数。
+#define YAW_GYRO_SIGN   1.0f                // Gyro Z 轴与本项目 Yaw 正方向之间的符号关系。
 
-/* Mag只承担低频漂移修正，单次不直接覆盖Yaw。
- * 50Hz下0.02对应约1s量级的校正时间常数 */
+/*
+ * Mag 仅承担低频 Yaw 漂移修正，不直接覆盖 Gyro 积分状态。
+ * 50 Hz Mag 更新下，0.02 对应约 1 s 量级的校正时间常数。
+ */
 #define YAW_MAG_CORRECTION_GAIN 0.02f
-#define YAW_MAG_REFFERENCE_UPDATE_GAIN 0.02f
+#define YAW_MAG_REFERENCE_UPDATE_GAIN 0.02f
 
-#define YAW_MAG_MIN_FIELD_GAUSS 0.05f
-#define YAW_MAG_MAX_FIELD_GAUSS 2.00f
-#define YAW_MAG_FILED_RATIO_MIN 0.65f
-#define YAW_MAG_FILED_RATIO_MAX 1.35f
-#define YAW_MAG_INNOVATION_GATE_RAD (30.0f * YAW_DEG_TO_RAD)
+/* Mag 基础有效性与融合门限。 */
 
-#define YAW_MAG_REACQUIRE_REQUIRED_SAMPLES 50U  // Disarmed重新捕获需要连续50个稳定Mag样本，约为1s(@ 50Hz)
-#define YAW_MAG_REACQUIRE_MAX_HEADING_STEP_RAD (3.0f * YAW_DEG_TO_RAD) // 相邻Mag航向变化不能超过3°
+#define YAW_MAG_MIN_FIELD_GAUSS 0.05f       // 允许的最小绝对磁场模长，Gauss。
+#define YAW_MAG_MAX_FIELD_GAUSS 2.00f       // 允许的最大绝对磁场模长，Gauss。
+#define YAW_MAG_FIELD_RATIO_MIN 0.65f       // 当前场强相对参考场强的最小允许比例。
+#define YAW_MAG_FIELD_RATIO_MAX 1.35f       // 当前场强相对参考场强的最大允许比例。
+#define YAW_MAG_INNOVATION_GATE_RAD (30.0f * YAW_DEG_TO_RAD)    // Mag 新息绝对值门限，rad。
 
-/* 重新捕获期间不再使用旧field_reference判断，
- * 而是检查相邻样本磁场模长是否稳定。 */
+/*
+ * Disarmed Mag Reacquire 条件。
+ * 必须连续收到航向与场强均稳定的 Mag 样本，才允许重新建立绝对 Yaw 基准。
+ */
+#define YAW_MAG_REACQUIRE_REQUIRED_SAMPLES 50U  // Reacquire 所需连续稳定样本数，约 1s @ 50Hz。
+#define YAW_MAG_REACQUIRE_MAX_HEADING_STEP_RAD \
+    (3.0f * YAW_DEG_TO_RAD)     // 相邻候选 Mag 航向允许的最大变化量，rad。
+
+/*
+ * Reacquire 阶段不再依赖可能已经失效的旧 Field Reference，
+ * 而通过相邻样本场强比例判断当前磁场环境是否持续稳定。
+ */
 #define YAW_MAG_REACQUIRE_FIELD_STEP_RATIO_MIN 0.90f
 #define YAW_MAG_REACQUIRE_FIELD_STEP_RATIO_MAX 1.10f
 
+/* Gyro Yaw 积分允许的控制周期范围，s。 */
 #define YAW_ESTIMATOR_DT_MIN_S 0.0005f
 #define YAW_ESTIMATOR_DT_MAX_S 0.0050f
 
+/**
+ * @brief   Yaw Estimator 内部状态。
+ */
 typedef struct
 {
     YawEstimatorDiagnostics_t diag;
-    float field_reference_gauss;
 
-    /* Disarmed重新捕获状态 */
-    float reacquire_last_yaw_rad;
-    float reacquire_last_field_gauss;
-    uint16_t reacquire_stable_count;    // count为0表示当前没有正在确认的Mag序列
+    float field_reference_gauss;    /**< 当前用于场强比例门限的参考磁场模长，Gauss。 */
+
+    float reacquire_last_yaw_rad;       /**< Reacquire 候选序列上一帧 Mag Yaw，rad。 */
+    float reacquire_last_field_gauss;   /**< Reacquire 候选序列上一帧磁场模长，Gauss。 */
+    uint16_t reacquire_stable_count;    /**< 当前连续稳定 Mag 样本数；0表示无候选序列。 */
 } YawEstimatorState_t;
 
 static YawEstimatorState_t s_yaw;
 
+/* =========================================================================
+ * 内部辅助函数
+ * ========================================================================= */
+
+/* 将角度归一化到 [-pi, pi]。 */
 static float YawEstimator_WrapPi(float angle_rad)
 {
     while(angle_rad > M_PI)
@@ -56,12 +84,20 @@ static float YawEstimator_WrapPi(float angle_rad)
     return angle_rad;
 }
 
+/*
+ * 检查浮点值是否处于可接受的有限范围。
+ * value == value 用于排除 NaN，绝对范围同时排除 Inf 和明显损坏值。
+ */
 static bool YawEstimator_FloatIsFinite(float value)
 {
-    /* NaN与自身不想等；绝对值门限同时排除Inf和明显损坏值 */
-    return value == value && value > -10000.0f && value < 10000.0f;
+    return value == value &&
+           value > -10000.0f &&
+           value < 10000.0f;
 }
 
+/*
+ * 清除当前 Disarmed Mag Reacquire 候选序列。
+ */
 static void YawEstimator_ResetMagReacquire(void)
 {
     s_yaw.reacquire_last_yaw_rad = 0.0f;
@@ -69,22 +105,23 @@ static void YawEstimator_ResetMagReacquire(void)
     s_yaw.reacquire_stable_count = 0U;
 }
 
-/**
- * @brief   在Disarmed状态下确认Mag已经连续稳定，并重新建立Yaw基准。
+/*
+ * 在 Disarmed 状态下确认异常后的 Mag 是否已经恢复稳定。
  * 
- * @note    该函数只会在正常Innovation/磁场参考门限拒绝Mag后调用。
- *          Armed时绝不允许直接改变Yaw基准。
+ * 正常 Field Ratio / Innovation 门限已经拒绝当前 Mag 时才进入该路径。
+ * Armed 状态下禁止通过 Reacquire 直接改变绝对 Yaw 基准。
  */
 static bool YawEstimator_TryReacquireMag(float mag_yaw_rad,
-                                            float field_norm_gauss,
-                                            bool is_disarmed)
+                                         float field_norm_gauss,
+                                         bool is_disarmed)
 {
     if(!is_disarmed)
     {
         YawEstimator_ResetMagReacquire();
         return false;
     }
-    /* 当前样本作为新候选序列的第一个样本。 */
+    
+    // 第一帧有效 Mag 仅作为新候选稳定序列的起点。
     if(s_yaw.reacquire_stable_count == 0U)
     {
         s_yaw.reacquire_last_yaw_rad = mag_yaw_rad;
@@ -96,10 +133,13 @@ static bool YawEstimator_TryReacquireMag(float mag_yaw_rad,
     const float heading_step_rad = fabsf(YawEstimator_WrapPi(
         mag_yaw_rad - s_yaw.reacquire_last_yaw_rad));
 
-    const float field_step_ratio = field_norm_gauss / s_yaw.reacquire_last_field_gauss;
+    const float field_step_ratio = 
+        field_norm_gauss / s_yaw.reacquire_last_field_gauss;
 
-    /* 航向或磁场模长出现突变时，不继续累计。
-     * 当前样本仍可作为下一段候选序列的起点。 */
+    /*
+     * 相邻航向或场强发生明显跳变时，认为稳定序列中断。
+     * 当前样本仍作为下一段候选序列的第一帧，避免额外丢失一次观测。
+     */
     if(heading_step_rad > YAW_MAG_REACQUIRE_MAX_HEADING_STEP_RAD ||
         field_step_ratio < YAW_MAG_REACQUIRE_FIELD_STEP_RATIO_MIN ||
         field_step_ratio > YAW_MAG_REACQUIRE_FIELD_STEP_RATIO_MAX)
@@ -116,13 +156,17 @@ static bool YawEstimator_TryReacquireMag(float mag_yaw_rad,
     if(s_yaw.reacquire_stable_count < YAW_MAG_REACQUIRE_REQUIRED_SAMPLES)
     {
         s_yaw.reacquire_stable_count++;
+
+        if (s_yaw.reacquire_stable_count < YAW_MAG_REACQUIRE_REQUIRED_SAMPLES)
+        {
+            return false;
+        }
     }
 
-    if(s_yaw.reacquire_stable_count < YAW_MAG_REACQUIRE_REQUIRED_SAMPLES)
-    {
-        return false;
-    }
-
+    /*
+     * 连续稳定条件满足后，直接以当前 Mag 航向重新建立绝对 Yaw，
+     * 同时以当前场强建立新的 Field Reference。
+     */
     s_yaw.diag.yaw_rad = mag_yaw_rad;
     s_yaw.diag.mag_yaw_rad = mag_yaw_rad;
     s_yaw.diag.mag_innovation_rad = 0.0f;
@@ -138,6 +182,12 @@ static bool YawEstimator_TryReacquireMag(float mag_yaw_rad,
     return true;
 }
 
+/*
+ * 校验 Mag 样本并计算倾斜补偿后的航向与磁场模长。
+ * 
+ * 本函数只处理单帧几何计算和绝对场强有效性；
+ * Field Ratio 与 Innovation 门限由上层融合逻辑判断。
+ */
 static bool YawEstimator_CalculateMagHeading(const MagData_t *mag,
                                             float roll_rad,
                                             float pitch_rad,
@@ -168,13 +218,13 @@ static bool YawEstimator_CalculateMagHeading(const MagData_t *mag,
                                    mag->MY * mag->MY +
                                    mag->MZ * mag->MZ);
 
-    /* 即使触发绝对场强门限，也保留原始模长供诊断 */
+    // 即使绝对场强门限失败，也保留原始模长供 Diagnostics 使用。
     *field_norm_gauss = field_norm;
 
     if(field_norm < YAW_MAG_MIN_FIELD_GAUSS ||
         field_norm > YAW_MAG_MAX_FIELD_GAUSS)
     {
-        *reject_reason |= YAW_MAG_REJECT_ABSOULTE_FIELD;
+        *reject_reason |= YAW_MAG_REJECT_ABSOLUTE_FIELD;
         return false;
     }
 
@@ -183,12 +233,16 @@ static bool YawEstimator_CalculateMagHeading(const MagData_t *mag,
     const float sin_pitch = sinf(pitch_rad);
     const float cos_pitch = cosf(pitch_rad);
 
-    /* 与原Attitude_CptYaw保持同一坐标约定：
-     * Mh = Ry(Pitch) * Rx(Roll) * M */
+    /*
+     * 将倾斜状态下的磁场向量补偿到水平面：
+     * 
+     * M_horizontal = Ry(Pitch) * Rx(Roll) * M
+     */
     const float my_horizontal = cos_roll * mag->MY - sin_roll * mag->MZ;
     const float mz_after_roll = sin_roll * mag->MY + cos_roll * mag->MZ;
     const float mx_horizontal = cos_pitch * mag->MX + sin_pitch * mz_after_roll;
-    /* 与当前Gyro Yaw正方向保持一致 */
+
+    // 按当前 Yaw 坐标方向约定由水平磁场计算绝对航向。
     const float heading = atan2f(my_horizontal, mx_horizontal);
 
     if(!YawEstimator_FloatIsFinite(heading))
@@ -201,12 +255,18 @@ static bool YawEstimator_CalculateMagHeading(const MagData_t *mag,
     return true;
 }
 
-void YawEstimator_Init(float field_reference_gauss)
+/* =========================================================================
+ * 航向估计（Yaw Estimator）
+ * ========================================================================= */
+
+ void YawEstimator_Init(float field_reference_gauss)
 {
     memset(&s_yaw, 0, sizeof(s_yaw));
 
-    /* 优先使用Hard/Soft-Iron拟合得到的参考值建立上电基准。
-     * 配置值异常时保持为0，由首次有效Mag样本回退建立参考。 */
+    /*
+     * 有限使用 Hard/Soft-Iron 校准得到的参考场强。
+     * 配置无效时保持为零，后续由首次有效 Mag 样本建立参考值。
+     */
     if(YawEstimator_FloatIsFinite(field_reference_gauss) &&
         field_reference_gauss > YAW_MAG_MIN_FIELD_GAUSS &&
         field_reference_gauss < YAW_MAG_MAX_FIELD_GAUSS)
@@ -217,6 +277,7 @@ void YawEstimator_Init(float field_reference_gauss)
 
 void YawEstimator_UpdateGyro(float gz_dps, float dt_s)
 {
+    // 未建立绝对 Yaw 前不单独使用 Gyro 启动航向状态。
     if(!s_yaw.diag.initialized ||
         !YawEstimator_FloatIsFinite(gz_dps) ||
         dt_s < YAW_ESTIMATOR_DT_MIN_S ||
@@ -239,6 +300,7 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
     float field_norm_gauss = 0.0f;
     uint8_t reject_reason = YAW_MAG_REJECT_NONE;
 
+    // 每帧开始时先清除上一帧的瞬时 Diagnostics 状态。
     s_yaw.diag.mag_accepted = false;
     s_yaw.diag.mag_field_ratio = 0.0f;
     s_yaw.diag.mag_reject_reason = YAW_MAG_REJECT_NONE;
@@ -252,7 +314,7 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
         s_yaw.diag.mag_field_norm_gauss = field_norm_gauss;
         s_yaw.diag.mag_reject_reason = reject_reason;
 
-        /* 无效样本会中断“连续稳定”的重新捕获确认 */
+        // 无效样本会中断“连续稳定”的 Reacquire 确认。
         YawEstimator_ResetMagReacquire();
         return false;
     }
@@ -260,15 +322,20 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
     s_yaw.diag.mag_yaw_rad = mag_yaw_rad;
     s_yaw.diag.mag_field_norm_gauss = field_norm_gauss;
 
-    /* 首次有效Mag样本建立初始绝对航向，
-     * 此路径只发生在YawEstimator_Init之后 */
+    /*
+     * 首次有效 Mag 样本直接建立绝对 Yaw。
+     * 此后高频状态主要由 Gyro 推进，再由 Mag 进行低频修正。
+     */
     if(!s_yaw.diag.initialized)
     {
         s_yaw.diag.yaw_rad = mag_yaw_rad;
         s_yaw.diag.mag_innovation_rad = 0.0f;
         s_yaw.diag.mag_reject_reason = YAW_MAG_REJECT_NONE;
 
-        /* 拟合参考值有效时不再被首帧覆盖；只有配置无效才回退到当前模长。 */
+        /*
+         * 校准 Field Reference 有效时保留配置值；
+         * 仅在配置无效时使用首帧磁场模长建立参考。
+         */
         if(s_yaw.field_reference_gauss <= YAW_MAG_MIN_FIELD_GAUSS ||
             s_yaw.field_reference_gauss >= YAW_MAG_MAX_FIELD_GAUSS)
         {
@@ -277,6 +344,7 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
 
         s_yaw.diag.mag_field_ratio =
             field_norm_gauss / s_yaw.field_reference_gauss;
+
         s_yaw.diag.initialized = true;
         s_yaw.diag.mag_accepted = true;
 
@@ -284,26 +352,41 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
         return true;
     }
 
+    // 参考值异常时以当前有效 Mag 模长重新建立最基本的场强参考。
     if(s_yaw.field_reference_gauss <= YAW_MAG_MIN_FIELD_GAUSS)
         s_yaw.field_reference_gauss = field_norm_gauss;
 
     const float field_ratio = field_norm_gauss / s_yaw.field_reference_gauss;
+
+    /*
+     * Mag Innovation 表示 Mag 航向观测与当前 Gyro-Mag 融合 Yaw
+     * 之间的最短角度偏差。
+     */
     const float innovation_rad = YawEstimator_WrapPi(
         mag_yaw_rad - s_yaw.diag.yaw_rad);
 
     s_yaw.diag.mag_field_ratio = field_ratio;
     s_yaw.diag.mag_innovation_rad = innovation_rad;
 
+    /*
+     * Field Ratio 用于检测相对参考地磁场的幅值异常，
+     * 可识别部分局部磁干扰或校准失效情况。
+     */
     const bool field_rejected =
-        field_ratio < YAW_MAG_FILED_RATIO_MIN ||
-        field_ratio > YAW_MAG_FILED_RATIO_MAX;
+        field_ratio < YAW_MAG_FIELD_RATIO_MIN ||
+        field_ratio > YAW_MAG_FIELD_RATIO_MAX;
 
     if(field_rejected)
     {
         s_yaw.diag.mag_reject_reason |= YAW_MAG_REJECT_FIELD_RATIO;
     }
 
-    const bool innovation_rejected = fabsf(innovation_rad) > YAW_MAG_INNOVATION_GATE_RAD;
+    /*
+     * Innovation 过大表示 Mag 航向与当前融合状态严重不一致，
+     * 不允许该单帧观测直接拉动 Yaw。
+     */
+    const bool innovation_rejected = 
+        fabsf(innovation_rad) > YAW_MAG_INNOVATION_GATE_RAD;
 
     if(innovation_rejected)
     {
@@ -312,28 +395,36 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
 
     if(s_yaw.diag.mag_reject_reason != YAW_MAG_REJECT_NONE)
     {
-        /* Armed时继续拒绝异常Mag，
-         * Disarmed时则检测Mag是否已连续稳定，满足条件后重新捕获 */
+        /*
+         * Armed 时持续拒绝异常 Mag；
+         * Disarmed 时允许通过连续稳定样本确认后重新建立 Yaw 基准。
+         */
         return YawEstimator_TryReacquireMag(
             mag_yaw_rad,
             field_norm_gauss,
             is_disarmed);
     }
 
-    /* Mag正常通过门限，执行低增益慢校正 */
+    /*
+     * Mag 正常通过门限后仅执行低增益校正，
+     * 保留 Gyro 积分提供的高频动态响应。
+     */
     s_yaw.diag.yaw_rad = YawEstimator_WrapPi(
         s_yaw.diag.yaw_rad + YAW_MAG_CORRECTION_GAIN * innovation_rad);
     s_yaw.diag.mag_accepted = true;
     s_yaw.diag.mag_reject_reason = YAW_MAG_REJECT_NONE;
 
-    /* 正常融合已经恢复，不再需要重新捕获候选序列 */
+    // 正常融合恢复后，旧 Reacquire 候选序列不再有效。
     YawEstimator_ResetMagReacquire();
 
-    /* 在Disarmed时缓慢更新参考磁场强度 */
+    /*
+     * Disarmed 时认为外部磁干扰和机体动态较弱，
+     * 因此允许参考场强缓慢跟踪长期环境变化。
+     */
     if(is_disarmed)
     {
         s_yaw.field_reference_gauss +=
-            YAW_MAG_REFFERENCE_UPDATE_GAIN *
+            YAW_MAG_REFERENCE_UPDATE_GAIN *
             (field_norm_gauss - s_yaw.field_reference_gauss);
     }
 
@@ -356,5 +447,7 @@ void YawEstimator_CopyDiagnostics(YawEstimatorDiagnostics_t *out)
         return;
 
     *out = s_yaw.diag;
+
+    // Field Reference 属于内部持久状态，复制时补入公开 Diagnostics。
     out->mag_field_reference_gauss = s_yaw.field_reference_gauss;
 }

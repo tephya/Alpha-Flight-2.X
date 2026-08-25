@@ -1,3 +1,8 @@
+/**
+ * @file    bsp_debug_uart.c
+ * @brief   双 IMU 差值调试输出实现。
+ */
+
 #include "bsp_debug_uart.h"
 #include "stm32f4xx_hal.h"
 #include <stdio.h>
@@ -5,30 +10,45 @@
 
 extern UART_HandleTypeDef huart3;
 
-/* 分频：每N帧打印一次。800Hz/8=100Hz刷新，测试阶段够用；
- * 想改密度只改这一个数，不用动其他逻辑 */
+/**
+ * Debug UART 打印分频。
+ * 
+ * 若调用频率为 800 Hz，则每 8 次调用输出一次，
+ * 对应约 100 Hz 的调试数据输出频率。
+ */
 #define DEBUG_PRINT_DIVIDER 8
 
-/**
- * @brief   纯测试用：打印IMU1/IMU2六轴数据及差值，供推算交叉验证阈值。
- * @note    内部自带分频，不是每次调用都真的发送。
- *          调试完毕、阈值定下来后，这个模块和对它的调用整体删除，不进正式版本。 
- * @param   d1 姿态数据结构体1
- * @param   d2 姿态数据结构体2
- */
 void DebugUart_PrintImuDiff(const IcmData_t *d1, const IcmData_t *d2)
 {
+    if(d1 == NULL || d2 == NULL)
+    {
+        return;
+    }
+
     static uint32_t s_counter = 0;
-    char buf[256];
-    int len;
 
     s_counter++;
+
+    /*
+     * 仅每 DEBUG_PRINT_DIVIDER 次调用执行一次格式化与 UART 发送，
+     * 降低高频控制路径中的调试输出开销。
+     */
     if (s_counter % DEBUG_PRINT_DIVIDER != 0)
     {
         return;
     }
 
-    len = snprintf(buf, sizeof(buf),
+    char buf[256];
+
+    /*
+     * 输出两路 IMU 对应轴的直接差距：
+     * 
+     * d_* = IMU1 - IMU2
+     * 
+     * 这些数据主要用于离线观察正常状态下的双 IMU 分布范围，
+     * 从而辅助确定 CrossCheck Threshold。
+     */
+    const int len = snprintf(buf, sizeof(buf),
                    "d_gx=%.3f d_gy=%.3f d_gz=%.3f d_ax=%.4f d_ay=%.4f d_az=%.4f\r\n",
                    (double)(d1->gx - d2->gx),
                    (double)(d1->gy - d2->gy),
@@ -37,7 +57,13 @@ void DebugUart_PrintImuDiff(const IcmData_t *d1, const IcmData_t *d2)
                    (double)(d1->ay - d2->ay),
                    (double)(d1->az - d2->az));
 
-    if (len > 0)
+    /*
+     * snprintf() 返回“本来需要写入的字符数”。
+     * 只有结果大于 0 且确实完整落入 Buffer 时才发送，
+     * 避免发截断后仍按过大的 len 读取 Buffer。
+     */
+    if (len > 0 &&
+        len < (int)sizeof(buf))
     {
         HAL_UART_Transmit(&huart3, (uint8_t *)buf, (uint16_t)len, 10);
     }

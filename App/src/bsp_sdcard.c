@@ -1,52 +1,114 @@
+/**
+ * @file    bsp_sdcard.c
+ * @brief   SD Card SPI Mode 初始化及单 Block DMA 读写实现。
+ */
+
 #include "bsp_sdcard.h"
 #include "main.h"
 #include <string.h>
+/** 拉低 SD CS，选中 Card。 */
+#define SD_CS_LOW()      \
+    HAL_GPIO_WritePin(   \
+        SD_CS_GPIO_Port, \
+        SD_CS_Pin,       \
+        GPIO_PIN_RESET)
 
-
-#define SD_CS_LOW() HAL_GPIO_WritePin(SD_CS_GPIO_Port, SD_CS_Pin, GPIO_PIN_RESET)
-
-#define SD_DMA_TIMEOUT_MS 20U
-#define SD_BUSY_TIMEOUT_MS 500U
+#define SD_DMA_TIMEOUT_MS 20U       // 单次 SPI DMA Transfer 最大等待时间，ms。
+#define SD_BUSY_TIMEOUT_MS 500U     // SD Card 内部 Programming Busy 最大等待时间，ms。
+#define SD_BLOCK_SIZE 512U          // SD Block 固定长度，Byte。
+#define SD_SPI_MAX_HZ 2625000UL     // 运行阶段允许的最高 SPI Clock，Hz。
 
 extern SPI_HandleTypeDef hspi2;
 
-static SdCardType_t s_sdCardType = SD_TYPE_UNKNOWN;
-static osSemaphoreId_t s_sdXferSem = NULL;
-static volatile uint8_t s_sdDmaError = 0;
+static SdCardType_t s_sdCardType = SD_TYPE_UNKNOWN;     // 当前识别到的 SD Card 地址类型。
+static osSemaphoreId_t s_sdXferSem = NULL;      // SPI2 DMA 完成同步信号量。
+static volatile uint8_t s_sdDmaError = 0;       // 本轮 SPI DMA 是否发生错误。
 
-// DMA全双工传输时，不关心的一侧用这两个静态scratch缓冲填充，避免每次现场申请栈内存
+/*
+ * SPI DMA 为 Full-Duplex。
+ * 
+ * 当业务只关心 RX 时，TX 端持续发送 0xFF；
+ * 当业务只关心 TX 时，RX 端数据写入 Sink Buffer。
+ * 
+ * 两个 Buffer 均放入 DMA 可访问 SRAM，避免在调用现场申请大块 Stack。
+ */
 #pragma arm section zidata = "DMA_SAFE_SRAM"
+
 static uint8_t s_sdTxDummy[512];
 static uint8_t s_sdRxSink[512];
-#pragma arm section zidata		// 恢复默认，后面的变量不受影响
 
+#pragma arm section zidata
+
+/*
+ * 释放 SD CS。
+ * 
+ * CS 拉高后额外发送一个 0xFF Byte，
+ * 为 Card 提供额外 SPI Clock，使一次 Transaction 完整结束并释放 Bus。
+ */
 static void SD_CS_High(void)
 {
     uint8_t rx;
-    HAL_GPIO_WritePin(SD_CS_GPIO_Port, SD_CS_Pin, GPIO_PIN_SET);
-    HAL_SPI_TransmitReceive(&hspi2, s_sdTxDummy, &rx, 1, 10);       // 额外1个clock(经验做法，目的是等信号稳定)
+
+    HAL_GPIO_WritePin(
+        SD_CS_GPIO_Port,
+        SD_CS_Pin,
+        GPIO_PIN_SET);
+
+    HAL_SPI_TransmitReceive(
+        &hspi2,
+        s_sdTxDummy,
+        &rx,
+        1U,
+        10U);
 }
 
-/**
- * @brief   底层阻塞式SPI单字节全双工收发，仅用于命令/相应这类短小、不值得上DMA的场景
+/*
+ * 阻塞式收发单个 SPI Byte。
+ * 
+ * 仅用于 Command，R1，Token，CRC 等短数据阶段；
+ * 512 Byte Payload 才使用 DMA。
  */
 static uint8_t SD_SPI_RWByte(uint8_t txd)
 {
     uint8_t rxd = 0xFF;
-    HAL_SPI_TransmitReceive(&hspi2, &txd, &rxd, 1, 10);
+
+    HAL_SPI_TransmitReceive(
+        &hspi2,
+        &txd,
+        &rxd,
+        1U,
+        10U);
+
     return rxd;
 }
 
-/**
- * @brief   发送标准6字节SD命令并等待R1响应
+/*
+ * 发送一条标准 6 Byte SD Command，并等待 R1 Response。
+ * 
+ * SPI Mode Command Format：
+ * 
+ * [0x40 | CMD]
+ * [ARG31:24]
+ * [ARG23:16]
+ * [ARG15:8]
+ * [ARG7:0]
+ * 
+ * SPI Mode 初始化完成后通常不要求有效 CRC，
+ * 但 CMD0 / CMD8 在初始化阶段使用协议规定的固定 CRC。
  */
 static uint8_t SD_SendCmd(uint8_t cmd ,uint32_t arg)
 {
-    uint8_t crc = 0x01;
-    if(cmd == 0)
-        crc = 0x95;
-    if(cmd == 8)
-        crc = 0x87;
+    uint8_t crc = 0x01U;
+
+    if (cmd == 0U)
+    {
+        crc = 0x95U;
+    }
+
+    if (cmd == 8U)
+    {
+        crc = 0x87U;
+    }
 
     SD_SPI_RWByte(0x40 | cmd);
     SD_SPI_RWByte((arg >> 24) & 0xFF);
@@ -55,7 +117,12 @@ static uint8_t SD_SendCmd(uint8_t cmd ,uint32_t arg)
     SD_SPI_RWByte(arg & 0xFF);
     SD_SPI_RWByte(crc);
 
+    /*
+     * R1 bit7 为 0 时表示 Response Byte 已经达到。
+     * Card 在 Command 后可能延迟若干 Byte 才输出 R1。
+     */
     uint8_t res = 0xFF;
+
     for (int i = 0; i < 8; i++)
     {
         res = SD_SPI_RWByte(0xFF);
@@ -65,9 +132,15 @@ static uint8_t SD_SendCmd(uint8_t cmd ,uint32_t arg)
     return res;
 }
 
-/**
- * @brief   DMA全双工收发len字节，tx/rx任一方向不关心时传scratch缓冲
- * @note    调用方保证len<=512(scratch缓冲大小上限，SD卡Block本身也是512)
+/*
+ * 使用 SPI2 DMA 全双工传输 len Byte。
+ * 
+ * SPI 硬件时钟同时 TX / RX：
+ * 
+ * - 只读时：tx 指向 s_sdTxDummy:
+ * - 只写时：rx 指向 s_sdRxSink。
+ * 
+ * 调用方保证 len 不超过 Scratch Buffer 容量。
  */
 static int8_t SD_SPI_DMA_Transceive(const uint8_t *tx, uint8_t *rx, uint16_t len)
 {
@@ -76,31 +149,45 @@ static int8_t SD_SPI_DMA_Transceive(const uint8_t *tx, uint8_t *rx, uint16_t len
 
     s_sdDmaError = 0;
 
-    /* 正式发起这次传输前，先非阻塞地把信号量清空一次，
-     * 正常情况下这里应该拿不到东西(超时立刻返回)，如果真的拿到了，
-     * 说明是上一次传输遗留的、没被消费掉的信号，直接丢弃，
-     * 确保接下来真正的osSemaphoreAcquire等到的一定是这次传输自己的完成信号 */
+    /*
+     * 发起新 DMA 前先尝试清掉可能遗留的 Semaphore Token。
+     * 
+     * 正常情况下 Acquire(0) 应立即失败；
+     * 如果成功，说明存在上一轮未消费的完成信号，
+     * 将其丢弃，变无盘为本轮 DMA 已完成。
+     */
     osSemaphoreAcquire(s_sdXferSem, 0);
 
-    if(HAL_SPI_TransmitReceive_DMA(&hspi2, (uint8_t *)tx, rx, len) != HAL_OK)
-        return -2;
-
-    osStatus_t st = osSemaphoreAcquire(s_sdXferSem, SD_DMA_TIMEOUT_MS);
-    if(st != osOK)
+    if (HAL_SPI_TransmitReceive_DMA(
+            &hspi2,
+            (uint8_t *)tx,
+            rx,
+            len) != HAL_OK)
     {
-        return -3;      // 超时
+        return -2;
     }
 
-    if(s_sdDmaError)
+    /*
+     * Task 阻塞等待 SPI DMA Complete / Error Callback 释放 Semaphore。
+     * 等待期间 CPU 可调度其他 Task，不进行 Busy Wait。
+     */
+    const osStatus_t status = osSemaphoreAcquire(s_sdXferSem, SD_DMA_TIMEOUT_MS);
+    if(status != osOK)
+    {
+        return -3; 
+    }
+
+    if(s_sdDmaError != 0U)
         return -4;
 
     return 0;
 }
 
-/**
- * @brief   HAL_SPI_DMA全双工完成回调(全工程仅这一处实现，按Instance分流)
- * @note    项目当前只有SD卡这一路SPI走DMA，若以后有第二路DMA_SPI，
- *          就在CubeMX中统一定义回调
+/*
+ * SPI Full-Duplex DMA Complete HAL Callback。
+ * 
+ * 当前 SPI2 DMA 属于 SD Card 数据链，
+ * 完成后释放 Semaphore 唤醒正在等待的 SD Task。
  */
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 {
@@ -110,6 +197,12 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
     }
 }
 
+/*
+ * SPI HAL Error Callback。
+ * 
+ * 先记录 DMA Error，再释放 Semaphore，
+ * 使等待中的 Task 能及时退出并返回错误。
+ */
 void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
 {
     if(hspi->Instance == SPI2)
@@ -119,258 +212,420 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
     }
 }
 
-/**
- * @brief   初始化SD卡SPI层软件状态（信号量）+ 执行SD卡上电时序(CMD0/CMD8/ACMD41/CMD58)
- * @note    SPI2外设本身由CubeMX的MX_SPI2_Init()在调度器启动前完成初始化，
- *          本函数只负责创建DMA完成信号量、执行卡上电协议、判定SDSC/SDHC类型。
- *          必须在osKernelStart()之后、由某个Task调用(内部osDelay需要调度器运行)。
- *          初始化失败除了括号说明外，还可能与SD卡内部状态机未复位/未进入工作状态，卡损坏等有关。
- * @retval  0 : 成功
- *         -1 : CMD0无响应(卡未插入/接线问题)
- *         -2 : CMD8无响应(不支持SD 2.0协议的卡，本工程不支持)
- *         -3 : CMD8校验模式回显不匹配
- *         -4 : ACMD41超时(卡未完成内部初始化)
- */
 int8_t BSP_SD_Init(void)
 {
-    uint8_t res, buf[4];
+    uint8_t res;
+    uint8_t buf[4];
+
+    s_sdCardType = SD_TYPE_UNKNOWN;
 
     s_sdXferSem = osSemaphoreNew(1, 0, NULL);
+
+    /*
+     * SPI Read 时需要主动发送 Clock，
+     * 因此 Dummy TX Buffer 固定填充为 0xFF。
+     */
     memset(s_sdTxDummy, 0xFF, sizeof(s_sdTxDummy));
 
-    /* 卡上电(或MCU复位但卡未真正掉电)后先给一点真实事件，让卡内部状态机
-     * 有机会从上一次可能遗留的“半截”状态里自行超时回复-MCU的NRST不会让
-     * SD卡VDD跟着掉电重置，卡记得自己上次没聊完的那句话 */
-    osDelay(10);    
+    /*
+     * MCU Reset 不一定会让 SD Card 同时掉电。
+     * 
+     * Card 可能仍停留在上一次 Transaction 的中间状态，
+     * 因此先等待一小段时间，并在 CS High 状态下提供至少 74 个 Clock (@ 100~400 kHz)，
+     * 使 Card 有机会恢复并进入 SPI Mode 初始化入口。
+     */
+    osDelay(10U);
 
-    HAL_GPIO_WritePin(SD_CS_GPIO_Port, SD_CS_Pin, GPIO_PIN_SET);
-    for (int i = 0; i < 10; i++)
-        SD_SPI_RWByte(0xFF);        // >=74 dummy clock
+    HAL_GPIO_WritePin(
+        SD_CS_GPIO_Port,
+        SD_CS_Pin,
+        GPIO_PIN_SET);
 
-    // CMD0 带重试
-    res = 0xFF;
-    for (int i = 0; i < 10; i++)
+    for (uint8_t i = 0U;
+         i < 10U;
+         i++)
+    {
+        SD_SPI_RWByte(0xFFU);
+    }
+
+    /*
+     * CMD0：请求进入 Idle State。
+     * 
+     * 使用有限次数重试，兼容 Card 在 MCU Reset 后仍处于旧状态，
+     * 尚未完全恢复到可接受新 Command 的情况。
+     */
+    res = 0xFFU;
+
+    for (int i = 0U; i < 10U; i++)
     {
         SD_CS_LOW();
-        res = SD_SendCmd(0, 0x00000000);
+
+        res = SD_SendCmd(0U, 0x00000000UL);
+
         SD_CS_High();
 		
-		SD_SPI_RWByte(0xFF);
+		SD_SPI_RWByte(0xFFU);
         
-		if(res == 0x01)
+		if(res == 0x01U)
             break;
 
-        /* 给卡的内部超时机制机会自己复位回idle态 */
-        osDelay(2);
+        osDelay(2U);
     }
-    if(res != 0x01)
-        return -1;
 
-    // CMD8
+    if (res != 0x01U)
+    {
+        return -1;
+    }
+
+    /*
+     * CMD8：确认 Card 支持当前初始化流程，
+     * 并检查 Check Pattern 0xAA 是否被正确回显。
+     */
     SD_CS_LOW();
-    res = SD_SendCmd(8, 0x000001AA);
-    for (int i = 0; i < 4; i++)
-        buf[i] = SD_SPI_RWByte(0xFF);
+
+    res = SD_SendCmd(8U, 0x000001AAUL);
+
+    for (int i = 0U; i < 4U; i++)
+        buf[i] = SD_SPI_RWByte(0xFFU);
+
     SD_CS_High();
-    if(res != 0x01)
+
+    if(res != 0x01U)
         return -2;
-    if(buf[3] != 0xAA)
+
+    if(buf[3] != 0xAAU)
         return -3;
 
-    // ACMD41
+    /*
+     * ACMD41：
+     * 
+     * CMD55 表示下一条 Command 为 Application Specific Command：
+     * 随后的 ACMD41 请求 Card 完成内部初始化。
+     * 
+     * HCS bit (ACMD41 arg bit30) =1，请求支持 High Capacity Card(HCS)。
+     */
     res = 0xFF;
+    
     for (int i = 0; i < 500; i++)
     {
         SD_CS_LOW();
-        SD_SendCmd(55, 0x00000000);
+
+        (void)SD_SendCmd(
+            55U,
+            0x00000000UL);
+
         SD_CS_High();
 
         SD_CS_LOW();
-        res = SD_SendCmd(41, 0x40000000);
+
+        res =
+            SD_SendCmd(
+                41U,
+                0x40000000UL);
+
         SD_CS_High();
-        if(res == 0x00)
+        
+        if (res == 0x00U)
+        {
             break;
+        }
 
         osDelay(1);
     }
-    if(res != 0x00)
-        return -4;
 
-    // CMD58 判定SDHC/SDSC
+    if (res != 0x00U)
+    {
+        return -4;
+    }
+
+    /*
+     * CMD58：读取 OCR(Operating Conditions Register)。
+     *
+     * OCR CCS bit：
+     * 1 -> SDHC / SDXC，Block Addressing；
+     * 0 -> SDSC，Byte Addressing。
+     */
     SD_CS_LOW();
-    SD_SendCmd(58, 0x00000000);
+
+    (void)SD_SendCmd(
+        58U,
+        0x00000000UL);
+        
     for (int i = 0; i < 4; i++)
-        buf[i] = SD_SPI_RWByte(0xFF);
+        buf[i] = SD_SPI_RWByte(0xFFU);
+
     SD_CS_High();
 
-    s_sdCardType = (buf[0] & 0x40) ? SD_TYPE_SDHC : SD_TYPE_SDSC;
+    s_sdCardType =
+        (buf[0] & 0x40U)
+            ? SD_TYPE_SDHC
+            : SD_TYPE_SDSC;
 
     return 0;
 }
 
-/**
- * @brief   读取单个512字节Block(全程走DMA)
- * @note    寻址逻辑：SDHC卡block参数直接当Block号；SDSC卡内部转换为字节地址(Blcok*512)。
- *          时序：CMD17取R1 ->
- *               轮询等待Data Token(0xFE) ->
- *               DMA收512字节 ->
- *               丢弃2字节CRC
- * @param   block   Block索引(SDHC=Block号，SDSC内部自动转为字节地址)
- * @param   buf     接收缓冲区，至少512字节
- * @retval  0 : 成功
- *         -1 : CMD17发送200次仍未收到R1=0x00响应(命令被拒绝/卡未就绪)
- *         -2 : R1正常轮询500次仍未等到Data Token(0xFE)，读取超时
- *         -3 : DMA数据段传输失败(SPI_DMA_Transceive内部超时或DMA错误)
- */
 int8_t BSP_SD_ReadBlock(uint32_t block, uint8_t *buf)
 {
-    uint8_t res = 0xFF;
-    uint32_t addr = (s_sdCardType == SD_TYPE_SDHC) ? block : block * 512U;
+    if (buf == NULL)
+    {
+        return -4;
+    }
 
+    uint8_t res = 0xFF;
+
+    /*
+     * SDHC 使用 Block Address；
+     * SDSC 使用 Byte Address。
+     */
+    const uint32_t addr =
+        (s_sdCardType == SD_TYPE_SDHC)
+            ? block
+            : block * SD_BLOCK_SIZE;
+
+    /*
+     * CMD17：Single Block Read。
+     * 
+     * Card 接受命令后返回 R1=0x00，
+     * 随后通过 0xFE Data Token 表示 512 Byte Payload 即将开始。
+     */
     SD_CS_LOW();
 
-    for (int i = 0; i < 200; i++)
+    for (int i = 0U; i < 200U; i++)
     {
-        res = SD_SendCmd(17, addr);
-        if(res == 0x00)
-            break;
-        osDelay(2);
-    }
-    if(res != 0x00){ SD_CS_High(); return -1; }
+        res =
+            SD_SendCmd(
+                17U,
+                addr);
 
-    for (int i = 0; i < 500; i++)
-    {
-        res = SD_SPI_RWByte(0xFF);
-        if(res == 0xFE)
+        if (res == 0x00U)
+        {
             break;
-    }
-    if(res != 0xFE){ SD_CS_High(); return -2; }
+        }
 
-    if(SD_SPI_DMA_Transceive(s_sdTxDummy, buf, 512) != 0)
+        osDelay(2U);
+    }
+
+    if (res != 0x00U)
     {
         SD_CS_High();
-        return -3;
+        return -1;
     }
 
-    SD_SPI_RWByte(0xFF);    // CRC1
-    SD_SPI_RWByte(0xFF);    // CRC2
-
-    SD_CS_High();
-    return 0;
-}
-
-/**
- * @brief   写入单个512字节Block(全程走DMA)
- * @note    时序：CMD24取R1 -> 
- *               发Data Token(0xFE) ->
- *               DMA发512字节 ->
- *               发2字节dummy CRC ->
- *               轮询Data Response确认卡是否接收(0x05) ->
- *               轮询MISO直到卡内部擦写结束(脱离Busy)。
- * @param   block   Block索引(SDHC=Block号，SDSC内部自动转为字节地址)
- * @param   buf     待写入数据，512字节
- * @retval  0 : 成功
- *         -1 : CMD24发送200次仍未收到R1=0x00响应
- *         -2 : DMA数据段传输失败(含Data Token发送后的512字节实际数据)
- *         -3 : Data Response校验异常(卡拒接写入的数据，如CRC错误/写保护)
- *         -4 : 等待卡内部擦写结束超时(SD_BUSY_TIMEOUT_MS=500ms内MISO未回高电平，
- *              肯是卡本身写入慢或损坏)
- */
-int8_t BSP_SD_WriteBlock(uint32_t block, const uint8_t *buf)
-{
-    uint8_t res = 0xFF;
-    uint32_t addr = (s_sdCardType == SD_TYPE_SDHC) ? block : block * 512U;
-
-    SD_CS_LOW();
-
-    for (int i = 0; i < 200; i++)
+    /* 等待 Single Block Data Token 0xFE。 */
+    for (int i = 0U; i < 500U; i++)
     {
-        res = SD_SendCmd(24, addr);
-        if(res == 0x00)
+        res =
+            SD_SPI_RWByte(0xFFU);
+
+        if (res == 0xFEU)
+        {
             break;
-        osDelay(2);
+        }
     }
-    if(res != 0x00){ SD_CS_High(); return -1; }
 
-    SD_SPI_RWByte(0xFF);
-    SD_SPI_RWByte(0xFE);        // Data Token
-
-    if(SD_SPI_DMA_Transceive(buf, s_sdRxSink, 512) != 0)
+    if (res != 0xFEU)
     {
         SD_CS_High();
         return -2;
     }
 
-    SD_SPI_RWByte(0xFF);        // CRC1
-    SD_SPI_RWByte(0xFF);        // CRC2
-
-    res = 0xFF;
-    for (int i = 0; i < 10; i++)
+    /*
+     * SPI Read 仍需要 TX Clock，
+     * 因此 DMA TX 使用全 0xFF Dummy Buffer。
+     */
+    if (SD_SPI_DMA_Transceive(
+            s_sdTxDummy,
+            buf,
+            SD_BLOCK_SIZE) != 0)
     {
-        res = SD_SPI_RWByte(0xFF);
-        if((res & 0x11) == 0x01)
-            break;
+        SD_CS_High();
+        return -3;
     }
-    if((res & 0x1F) != 0x05){ SD_CS_High(); return -3; }
 
-    uint32_t start = osKernelGetTickCount();
+    /* SPI Mode Data Block 尾部包含 2 Byte CRC。 */
+    (void)SD_SPI_RWByte(0xFFU);
+    (void)SD_SPI_RWByte(0xFFU);
+
+    SD_CS_High();
+
+    return 0;
+}
+
+int8_t BSP_SD_WriteBlock(uint32_t block, const uint8_t *buf)
+{
+    if (buf == NULL)
+    {
+        return -5;
+    }
+
+    uint8_t res = 0xFFU;
+
+    const uint32_t addr =
+        (s_sdCardType == SD_TYPE_SDHC)
+            ? block
+            : block * SD_BLOCK_SIZE;
+
+    /*
+     * CMD24：Single Block Write。
+     * R1=0x00 表示 Card 接受本次 Write Command。
+     */
+    SD_CS_LOW();
+
+    for (int i = 0U; i < 200U; i++)
+    {
+        res =
+            SD_SendCmd(
+                24U,
+                addr);
+
+        if (res == 0x00U)
+        {
+            break;
+        }
+
+        osDelay(2U);
+    }
+
+    if (res != 0x00U)
+    {
+        SD_CS_High();
+        return -1;
+    }
+
+    /*
+     * 在 Data Token 前提供一个 Dummy Byte，
+     * 随后发送 Single Block Write Token 0xFE。
+     */
+    SD_SPI_RWByte(0xFF);
+    SD_SPI_RWByte(0xFE);
+
+    if (SD_SPI_DMA_Transceive(
+            buf,
+            s_sdRxSink,
+            SD_BLOCK_SIZE) != 0)
+    {
+        SD_CS_High();
+        return -2;
+    }
+
+    /*
+     * 当前 SPI Mode 下不计算 Payload CRC，
+     * 发送两个 Dummy CRC Byte。
+     */
+    SD_SPI_RWByte(0xFFU);
+    SD_SPI_RWByte(0xFFU);
+
+    /*
+     * 等待 Data Response Token。
+     * 
+     * 低 5 bit = 0x05 表示 Data Accepted。
+     */
+    res = 0xFFU;
+
+    for (int i = 0U; i < 10U; i++)
+    {
+        res =
+            SD_SPI_RWByte(0xFFU);
+
+        if ((res & 0x11U) == 0x01U)
+        {
+            break;
+        }
+    }
+
+    if ((res & 0x1FU) != 0x05U)
+    {
+        SD_CS_High();
+        return -3;
+    }
+
+    /*
+     * Card 接收完 512 Byte 后还需要内部 Programming。
+     * 
+     * Busy 期间 MISO 保持 Low：
+     * 当再次读到非 0x00 时表示 Card 已释放 Busy。
+     */
+    const uint32_t start = osKernelGetTickCount();
+
     do
     {
-        res = SD_SPI_RWByte(0xFF);
-        if((osKernelGetTickCount() - start) >= SD_BUSY_TIMEOUT_MS)
+        res =
+            SD_SPI_RWByte(0xFFU);
+
+        if ((uint32_t)(osKernelGetTickCount() -
+                       start) >=
+            SD_BUSY_TIMEOUT_MS)
         {
             SD_CS_High();
             return -4;
         }
-    } while (res == 0x00);
+    } while (res == 0x00U);
 
     SD_CS_High();
     return 0;
 }
 
-/**
- * @brief   切换SPI2波特率分频(初始化用低速，握手完成后切全速)
- * @param   prescaler   SPI_BAUDRATEPRESCALER_x(HAL宏)
+/*
+ * 修改 SPI2 Baud Rate Prescaler。
+ * 
+ * 仅改变 BR 位，不重新执行完整 HAL SPI Init。
+ * 修改前关闭 SPI，写入完成后重新使能。
  */
 static void BSP_SD_SetSpeed(uint32_t prescaler)
 {
     __HAL_SPI_DISABLE(&hspi2);
-    hspi2.Instance->CR1 = (hspi2.Instance->CR1 & ~SPI_CR1_BR) | prescaler;
+
+    hspi2.Instance->CR1 =
+        (hspi2.Instance->CR1 &
+         ~SPI_CR1_BR) |
+        prescaler;
+
     __HAL_SPI_ENABLE(&hspi2);
 }
 
-/**
- * @brief   运行时动态算出不超过2.625MHz的最高档位并切换
- * @note    2.625MHz是裸机架构实测验证过的安全上限，频率再高读写会不稳定。
- *          SPI2挂在APB1上，用HAL_RCC_GetPCLK1Freq()拿原始APB1时钟，
- *          (SPI外设不像定时器有"预分频≠1就乘2的规则")，直接是PCLK/prescaler，
- *          不假设具体时钟数数值，避免时钟配置变动后这里算错速度
- */
 void BSP_SD_SetSpeedFast(void)
 {
-    static const uint32_t s_divs[] = {2, 4, 8, 16, 32, 64, 128, 256};
-    static const uint32_t s_prescs[] = {
-        SPI_BAUDRATEPRESCALER_2,
-        SPI_BAUDRATEPRESCALER_4,
-        SPI_BAUDRATEPRESCALER_8,
-        SPI_BAUDRATEPRESCALER_16,
-        SPI_BAUDRATEPRESCALER_32,
-        SPI_BAUDRATEPRESCALER_64,
-        SPI_BAUDRATEPRESCALER_128,
-        SPI_BAUDRATEPRESCALER_256,
-    };
-    const uint32_t target_hz = 2625000UL;
+    /*
+     * SPI2 Clock 直接来源于 APB1 Peripheral Clock，
+     * 不存在 Timer Peripheral 的 “APB Prescaler ！= 1 时 ×2”规则。
+     */
+    static const uint32_t s_divs[] =
+        {
+            2U,
+            4U,
+            8U,
+            16U,
+            32U,
+            64U,
+            128U,
+            256U};
+
+    static const uint32_t s_prescs[] =
+        {
+            SPI_BAUDRATEPRESCALER_2,
+            SPI_BAUDRATEPRESCALER_4,
+            SPI_BAUDRATEPRESCALER_8,
+            SPI_BAUDRATEPRESCALER_16,
+            SPI_BAUDRATEPRESCALER_32,
+            SPI_BAUDRATEPRESCALER_64,
+            SPI_BAUDRATEPRESCALER_128,
+            SPI_BAUDRATEPRESCALER_256};
 
     uint32_t pclk = HAL_RCC_GetPCLK1Freq();
-    uint32_t chosen = SPI_BAUDRATEPRESCALER_256;    // 找不到合适档位时的保守兜底
 
-    for (uint8_t i = 0; i < sizeof(s_divs) / sizeof(s_divs[0]); i++)
+    /* 找不到合适档位时的保守兜底。 */
+    uint32_t chosen = SPI_BAUDRATEPRESCALER_256;
+
+    for (uint8_t i = 0U; i < sizeof(s_divs) / sizeof(s_divs[0]); i++)
     {
-        if((pclk / s_divs[i]) <= target_hz)
+        if ((pclk / s_divs[i]) <=
+            SD_SPI_MAX_HZ)
         {
-            chosen = s_prescs[i];       // s_divs从小到大排列，第一个不超标的就是最接近且不超标的档位
+            chosen =
+                s_prescs[i];
+
             break;
-        } 
+        }
     }
 
     BSP_SD_SetSpeed(chosen);

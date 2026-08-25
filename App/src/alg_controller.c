@@ -1,26 +1,41 @@
+/**
+ * @file    alg_controller.c
+ * @brief   姿态角度控制、角速度控制器及遥控通道映射实现。
+ */
+
 #include "alg_controller.h"
 #include <math.h>
 
-/* 当前Heading Hold外环Kp为1.0，因此5°航向误差对应5°/s目标。
- * 超过此范围时，Yaw Rate I只允许卸载，不允许继续增大。 */
+/**
+ * Yaw Rate 积分增长抑制区间。
+ * 当前 Heading Hold 外环 Kp = 1.0，因此航向误差数值约等于目标角速度。
+ * 大机动时逐步限制积分继续增长，但仍允许已有积分卸载。
+ */
 #define YAW_RATE_I_RELAX_START_DPS 5.0f
 #define YAW_RATE_I_RELAX_END_DPS 20.0f
 
+/** Roll/Pitch Rate Feedforward 增益及输出限幅。 */
 #define ROLL_RATE_FF_GAIN 0.50f
 #define PITCH_RATE_FF_GAIN 0.40f
 #define RATE_FF_LIMIT 10.0f
 
-/*========== 遥控通道映射 =========*/
-
+/* 遥控器归一化通道范围。 */
 #define RC_NORMALIZED_MIN 172U
 #define RC_NORMALIZED_MID 992U
 #define RC_NORMALIZED_MAX 1811U
 
+/** 全局姿态角度控制器实例。 */
 AngleController_t angle_controller;
+
+/** 全局角速度控制器实例。 */
 RateController_t rate_controller;
 
+/** Roll/Pitch Rate Feedforward 启用状态。 */
 static uint8_t s_roll_pitch_rate_ff_enabled;
 
+/**
+ * @brief   将数值限制在对称区间 [-limit, limit]。
+ */
 static float RateController_Limit(float value, float limit)
 {
     if(value > limit)
@@ -32,12 +47,13 @@ static float RateController_Limit(float value, float limit)
 }
 
 /**
- * @brief   根据Yaw目标角速度计算积分项(I)的增长缩放因子。
+ * @brief   根据 Yaw 目标角速度计算积分增长缩放系数。
  * 
- * 用于大机动时抑制积分项的累积，防止过冲与积分饱和。
+ * 小目标角速度下允许积分正常增长；随着目标角速度增大，
+ * 逐步降低积分增长速度，避免大机动期间产生过多积分累积。
  * 
- * @param[in]   yaw_rate_target 目标Yaw角速度(deg/s)。
- * @return float    积分缩放系数，范围[0.0,1.0]。
+ * @param[in]   yaw_rate_target Yaw 目标角速度，deg/s。
+ * @return  积分增长缩放系数，范围 [0.0, 1.0]。
  */
 static float RateController_GetYawIntegralGrowthScale(float yaw_rate_target)
 {
@@ -54,11 +70,13 @@ static float RateController_GetYawIntegralGrowthScale(float yaw_rate_target)
 }
 
 /**
- * @brief   将带中位的遥控器通道值映射为正负对称的物理量。
+ * @brief   将带中位的遥控器通道映射为对称输出量。
+ * 
+ * 中位对应 0，两端分别对应 -magnitude 和 +magnitude。
  * 
  * @param[in]   ch  遥控器原始通道值。
- * @param[in]   magnitude   映射输出的最大绝对值。
- * @return float    映射后的结果，范围 [-magnitude,magnitude]。
+ * @param[in]   magnitude   输出最大绝对值。
+ * @return  映射结果，范围 [-magnitude,magnitude]。
  */
 static float Map_CenteredChannel(uint16_t ch, float magnitude)
 {
@@ -79,7 +97,7 @@ static float Map_CenteredChannel(uint16_t ch, float magnitude)
            (float)(RC_NORMALIZED_MID - RC_NORMALIZED_MIN) * magnitude;
 }
 
-/*============================= 角度控制器(PID外环) ==============================*/
+/*============================= 姿态角度控制器（外环） ==============================*/
 
 void AngleController_Init(void)
 {
@@ -112,7 +130,7 @@ void AngleController_Update(float roll_target,
     angle_controller.pitch_rate_target = PID_Update(&angle_controller.pitch, pitch_meas, dt);
 }
 
-/*============================= 角速度控制器(PID内环) ============================*/
+/*============================= 角速度控制器（内环） ============================*/
 
 void RateController_Init(void)
 {
@@ -147,9 +165,9 @@ void RateController_Update(float roll_rate_target,
     PID_SetTarget(&rate_controller.yaw, yaw_rate_target);
 
     /*
-     * Rate Feedforward根据目标角速度直接产生少量即使控制量，
-     * 避免旧Rate Integral抵消新产生的Position Hold纠偏指令。
-     * Feedforward只辅助建立响应，Rate PID仍负责闭环误差修正。
+     * Rate Feedforward 根据目标角速度直接产生即使控制量，
+     * 避免已有 Rate Integral 抵消新产生的 Position Hold 纠偏指令。
+     * Feedforward 只改善响应建立速度，闭环误差仍由 Rate PID 修正。
      */
     if(s_roll_pitch_rate_ff_enabled != 0U)
     {
@@ -170,6 +188,7 @@ void RateController_Update(float roll_rate_target,
     rate_controller.roll_output = PID_Update(&rate_controller.roll, roll_rate, dt);
     rate_controller.pitch_output = PID_Update(&rate_controller.pitch, pitch_rate, dt);
 
+    // 大 Yaw 指令下限制积分继续增长，降低机动结束后的过冲风险。
     const float yaw_integral_growth_scale =
         RateController_GetYawIntegralGrowthScale(yaw_rate_target);
 
@@ -186,6 +205,7 @@ void RateController_SetRollPitchFeedForwardEnabled(uint8_t enabled)
 }
 
 /*================================ 航向锁定 ===================================*/
+
 float YawHeadingHold_Update(PID_t *pid_yaw,
                             float yaw_target_deg,
                             float yaw_meas_deg,
@@ -193,7 +213,7 @@ float YawHeadingHold_Update(PID_t *pid_yaw,
 {
     float yaw_err = yaw_target_deg - yaw_meas_deg;
     
-    // 处理角度环绕，保证总是沿最短路径旋转
+    // 将航向误差限制到 [-180, 180] deg，使控制始终选择最短旋转方向。
     if(yaw_err > 180.0f)
         yaw_err -= 360.0f;
     if(yaw_err < -180.0f)
@@ -203,6 +223,8 @@ float YawHeadingHold_Update(PID_t *pid_yaw,
 
     return PID_Update(pid_yaw, -yaw_err, dt);
 }
+
+/*================================ 遥控映射 ===================================*/
 
 float Map_Roll(uint16_t ch)
 {

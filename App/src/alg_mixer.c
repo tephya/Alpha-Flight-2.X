@@ -1,5 +1,13 @@
+/**
+ * @file    alg_mixer.c
+ * @brief   四旋翼电机混控及输出去饱和实现。
+ */
+
 #include "alg_mixer.h"
 
+/**
+ * @brief   将浮点输出限制到制定范围并转换为 uint16_t。
+ */
 static uint16_t clamp(float val, float min, float max)
 {
     if(val < min)
@@ -19,6 +27,7 @@ void Mixer(float roll_cmd,
            uint16_t *m3,
            uint16_t *m4)
 {
+    // 将 Roll/Pitch/Yaw 控制量转换为四路电机差动修正量。
     float correction[4] ={
         -pitch_cmd - roll_cmd + yaw_cmd,
         pitch_cmd - roll_cmd - yaw_cmd,
@@ -37,8 +46,10 @@ void Mixer(float roll_cmd,
             correction_max = correction[i];
     }
 
-    /* 如果所需的扭矩范围无法在物理上容纳于完整的电机行程范围内，
-     * 则同时缩放每个轴，以保持其方向和相对贡献 */
+    /**
+     * 若四路姿态修正量的跨度超过可用电机输出范围，则按同一比例缩放。
+     * 这样可以保持各轴控制量的方向及相对比例，避免单独裁剪某一路导致混控关系失真。
+     */
     const float output_range = MIXER_OUTPUT_LIMIT - MIXER_OUTPUT_IDLE;
     const float correction_range = correction_max - correction_min;
 
@@ -53,17 +64,15 @@ void Mixer(float roll_cmd,
         correction_max *= scale;
     }
 
-    /* collective是四路电机共同的基础输出。
-     * 最终每路输出 = collective + 对应姿态修正量。 */
+    // collective 为四路电机共享的基础输出，姿态修正量叠加在其上。
     float collective = (float)throttle;
 
     if(airmode_enabled)
     {
-        /* Airmode去饱和：
-         * 允许整体移动collective，以完整保留电机之间的姿态差动。
-         * 
-         * 例如某路修正为-700，为保证该路不低于110
-         * collective会被提高为810 */
+        /**
+         * Airmode 允许整体平移 collective，使所有电机输出保持在有效范围内，
+         * 从而尽可能完整保留姿态控制产生的电机差动。
+         */
         const float collective_min = MIXER_OUTPUT_IDLE - correction_min;
         const float collective_max = MIXER_OUTPUT_LIMIT - correction_max;
 
@@ -74,9 +83,10 @@ void Mixer(float roll_cmd,
     }
     else
     {
-        /* Airmode关闭时，不允许姿态修正主动抬高collective。
-         * Armed低油门只维持电机idle；若修正量导致单路越界，
-         * 由最终clamp裁剪，不再整体提高四路输出 */
+        /**
+         * Airmode 关闭时，姿态修正不能主动抬高基础油门。
+         * 低油门仅维持 Idle，单路越界由最终输出限幅处理。
+         */
         if(collective < MIXER_OUTPUT_IDLE)
             collective = MIXER_OUTPUT_IDLE;
         if(collective > MIXER_OUTPUT_LIMIT)
