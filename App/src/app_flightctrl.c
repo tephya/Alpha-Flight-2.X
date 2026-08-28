@@ -546,7 +546,7 @@ static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float 
          FLIGHT_ACCEL_BIAS_SETTLE_TIME_S);
 
     /*
-     * GPS 状态突变造成的大 Innovation 只允许在 Manual 中重新对齐 Estimator/
+     * GPS 状态突变造成的大 Innovation 只允许在 Manual 中重新对齐 Estimator，
      * 辅助模式已经接管时禁止突然重建状态。
      */
     const bool allow_estimator_state_reacquire =
@@ -558,13 +558,13 @@ static void FlightControl_UpdateHorizontalEstimator(const IcmData_t *imu, float 
      */
     if (s_nav_last.rmc_sequence != horizontal_estimator.last_gps_sequence)
     {
-        const bool require_rmc_position_confirmation =
+        const bool require_rmc_position_window_v_confirmation =
             (s_position_hold_requested != 0U) ||
             (s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD);
 
         const bool rmc_vector_use_allowed =
             FlightControl_UpdateRmcVectorUseAllowed(
-                require_rmc_position_confirmation);
+                require_rmc_position_window_v_confirmation);
 
         (void)HorizontalEstimator_CorrectGps(
             s_nav_last.gps_velocity_n_mps,
@@ -1092,7 +1092,9 @@ static void FlightControl_UpdateHorizontalMode(float dt)
     float pilot_velocity_target_e_mps;
 
     const float pilot_speed_limit_mps =
-        (s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) ? POSITION_HOLD_PILOT_SPEED_MPS : VELOCITY_HOLD_MAX_SPEED_MPS;
+        (s_horizontal_mode_active == HORIZONTAL_MODE_POSITION_HOLD) 
+            ? POSITION_HOLD_PILOT_SPEED_MPS 
+            : VELOCITY_HOLD_MAX_SPEED_MPS;
 
     FlightControl_GetPilotVelocityNe(
         pilot_speed_limit_mps,
@@ -1556,7 +1558,7 @@ void App_FlightCtrl_Task(void *argument)
         fc.pitch_meas = attitude.pitch * 57.29578f;
 
         /*
-         * 每个有效 Active IMU 周期均由 Gyro 推进 Yaw；
+         * 每个有效 Active IMU 周期均由 Gyro_Z 推进 Yaw；
          * Mag 只在新的低频样本到达时执行长期漂移修正。
          */
         YawEstimator_UpdateGyro(active_data.gz, dt);

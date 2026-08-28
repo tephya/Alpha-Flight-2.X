@@ -289,23 +289,29 @@ void HorizontalEstimator_Reset()
 {
     horizontal_estimator.velocity_n_mps = 0.0f;
     horizontal_estimator.velocity_e_mps = 0.0f;
+
     horizontal_estimator.accel_n_mps2 = 0.0f;
     horizontal_estimator.accel_e_mps2 = 0.0f;
+
     horizontal_estimator.accel_lpf_n_mps2 = 0.0f;
     horizontal_estimator.accel_lpf_e_mps2 = 0.0f;
+
     horizontal_estimator.accel_bias_forward_mps2 = 0.0f;
     horizontal_estimator.accel_bias_right_mps2 = 0.0f;
+
     horizontal_estimator.accel_bias_n_mps2 = 0.0f;
     horizontal_estimator.accel_bias_e_mps2 = 0.0f;
+
     horizontal_estimator.last_gps_sequence = 0U;
     horizontal_estimator.last_gps_tick_ms = 0U;
+    horizontal_estimator.last_gps_accepted = 0U;
+    horizontal_estimator.last_rmc_vector_used = 0U;
+
     horizontal_estimator.gps_accept_count = 0U;
+    horizontal_estimator.gps_accept_streak = 0U;
     horizontal_estimator.gps_reject_count = 0U;
     horizontal_estimator.initialized = 0U;
     horizontal_estimator.gps_healthy = 0U;
-    horizontal_estimator.last_gps_accepted = 0U;
-    horizontal_estimator.gps_accept_streak = 0U;
-    horizontal_estimator.last_rmc_vector_used = 0U;
 
     HorizontalEstimator_ResetPosition();
 }
@@ -333,6 +339,9 @@ void HorizontalEstimator_Predict(float ax_g,
     /*
      * 使用 R_body_to_ned 的前两行，将机体系 Accel 投影到 N/E。
      * 静止状态下重力应主要落在 NED Down 轴，因此理想 N/E 分量接近零。
+     * 
+     * v_ned = Rz(Yaw) · Ry(Pitch) · Rx(Roll) · v_body
+     * v_body = [ax, ay, az]
      */
     const float measured_n_g =
         (cp * cy) * ax_g +

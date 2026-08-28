@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Alpha2.0 十寸四旋翼飞控：实飞视频、自研飞控板与传感器子板展示。"
+    />
+    <meta name="theme-color" content="#071018" />
+    <title>Alpha2.0 Flight Control System</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+    <header class="site-header" data-header>
+      <a class="brand" href="#top" aria-label="返回页面顶部">
+        <span class="brand-mark" aria-hidden="true">A2</span>
+        <span class="brand-copy">
+          <strong>ALPHA2.0</strong>
+          <small>FLIGHT CONTROL SYSTEM</small>
+        </span>
+      </a>
+      <nav class="nav-links" aria-label="页面导航">
+        <a href="#flight-tests">Flight Tests</a>
+        <a href="#hardware">Hardware</a>
+        <a
+          class="nav-repo"
+          href="https://github.com/tephya/Alpha-Flight-2.X"
+          target="_blank"
+          rel="noreferrer"
+        >
+          GitHub <span aria-hidden="true">↗</span>
+        </a>
+      </nav>
+    </header>
+
+    <main id="main-content">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <img
+          class="hero-image"
+          src="./assets/hero/alpha-flight-hero.png"
+          alt="Alpha2.0 十寸四旋翼飞行器置于深色工程测试平台"
+        />
+        <div class="hero-shade" aria-hidden="true"></div>
+        <div class="hero-grid" aria-hidden="true"></div>
+
+        <div class="hero-content">
+          <p class="eyebrow"><span></span> INDEPENDENT FLIGHT CONTROL PLATFORM</p>
+          <h1 id="hero-title">
+            <span>Alpha2.0</span>
+            Flight Control System
+          </h1>
+          <p class="hero-lead">
+            面向十寸四旋翼的自研软硬件飞控平台。从 PCB、Embedded Firmware、RTOS
+            架构到实飞验证，形成完整的工程闭环。
+          </p>
+
+          <div class="hero-actions">
+            <a class="button button-primary" href="#flight-tests">
+              观看实飞 <span aria-hidden="true">↓</span>
+            </a>
+            <a class="button button-secondary" href="#hardware">查看 Hardware</a>
+          </div>
+
+          <ul class="tech-strip" aria-label="项目关键技术">
+            <li><span>MCU</span><strong>STM32F405</strong></li>
+            <li><span>RTOS</span><strong>CMSIS-RTOS2</strong></li>
+            <li><span>CONTROL</span><strong>800 Hz nominal</strong></li>
+            <li><span>OUTPUT</span><strong>DShot600</strong></li>
+          </ul>
+        </div>
+
+        <div class="hero-status" aria-label="项目状态">
+          <span class="status-dot"></span>
+          <div>
+            <small>CURRENT VALIDATION</small>
+            <strong>Attitude stabilization &amp; heading hold flight-tested</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="section flight-section" id="flight-tests" aria-labelledby="flight-title">
+        <div class="section-heading reveal">
+          <div>
+            <p class="section-index">01 / FLIGHT EVIDENCE</p>
+            <h2 id="flight-title">实飞，不是概念演示。</h2>
+          </div>
+          <p>
+            四段原始测试片段，覆盖空中飞行、低空悬停与近距离姿态观察。视频默认只加载封面与基本信息，播放时才读取内容。
+          </p>
+        </div>
+
+        <div class="video-grid">
+          <article class="video-card video-card-featured reveal">
+            <div class="video-frame">
+              <video
+                controls
+                preload="metadata"
+                playsinline
+                poster="./assets/video/flight-test-03.jpg"
+              >
+                <source src="./assets/video/flight-test-03.mp4" type="video/mp4" />
+                当前浏览器不支持 HTML5 Video。
+              </video>
+              <span class="video-duration">00:27</span>
+            </div>
+            <div class="video-copy">
+              <p class="card-kicker">FIELD TEST / 03</p>
+              <h3>Manual Flight Validation</h3>
+              <p>最长连续片段，用于观察飞行状态、操控响应与低空运动。</p>
+            </div>
+          </article>
+
+          <article class="video-card reveal">
+            <div class="video-frame">
+              <video
+                controls
+                preload="metadata"
+                playsinline
+                poster="./assets/video/flight-test-02.jpg"
+              >
+                <source src="./assets/video/flight-test-02.mp4" type="video/mp4" />
+              </video>
+              <span class="video-duration">00:13</span>
+            </div>
+            <div class="video-copy">
+              <p class="card-kicker">FIELD TEST / 02</p>
+              <h3>Low-altitude Hover</h3>
+              <p>近地悬停与平移测试。</p>
+            </div>
+          </article>
+
+          <article class="video-card reveal">
+            <div class="video-frame">
+              <video
+                controls
+                preload="metadata"
+                playsinline
+                poster="./assets/video/flight-test-04.jpg"
+              >
+                <source src="./assets/video/flight-test-04.mp4" type="video/mp4" />
+              </video>
+              <span class="video-duration">00:06</span>
+            </div>
+            <div class="video-copy">
+              <p class="card-kicker">FIELD TEST / 04</p>
+              <h3>Close-range Observation</h3>
+              <p>近距离记录机体姿态变化。</p>
+            </div>
+          </article>
+
+          <article class="video-card reveal">
+            <div class="video-frame">
+              <video
+                controls
+                preload="metadata"
+                playsinline
+                poster="./assets/video/flight-test-01.jpg"
+              >
+                <source src="./assets/video/flight-test-01.mp4" type="video/mp4" />
+              </video>
+              <span class="video-duration">00:03</span>
+            </div>
+            <div class="video-copy">
+              <p class="card-kicker">FIELD TEST / 01</p>
+              <h3>Airborne Pass</h3>
+              <p>空中飞行状态片段。</p>
+            </div>
+          </article>
+        </div>
+
+        <aside class="validation-note reveal">
+          <span class="validation-line" aria-hidden="true"></span>
+          <p>
+            <strong>Validation boundary</strong>
+            基础姿态增稳与航向保持已经实飞；水平速度保持与位置保持仍处于实验验证阶段。
+          </p>
+        </aside>
+      </section>
+
+      <section class="section hardware-section" id="hardware" aria-labelledby="hardware-title">
+        <div class="section-heading reveal">
+          <div>
+            <p class="section-index">02 / CUSTOM HARDWARE</p>
+            <h2 id="hardware-title">从 Flight Controller 到外部感知链。</h2>
+          </div>
+          <p>
+            下列照片均为项目实物原图。移动鼠标可查看轻微视差，点击任意模块可进入原图 Lightbox。
+          </p>
+        </div>
+
+        <div class="hardware-grid">
+          <button
+            class="hardware-card hardware-card-wide reveal"
+            type="button"
+            data-tilt
+            data-lightbox
+            data-full="./assets/hardware/flight-controller-front.jpg"
+            data-title="Flight Controller / Front"
+            data-caption="STM32F405 · Dual IMU · Power sensing · Peripheral interfaces"
+          >
+            <span class="hardware-media">
+              <img
+                src="./assets/hardware/flight-controller-front.jpg"
+                alt="自研飞控板正面"
+                loading="lazy"
+              />
+            </span>
+            <span class="hardware-meta">
+              <span><small>CORE BOARD / FRONT</small><strong>Flight Controller</strong></span>
+              <span class="hardware-arrow" aria-hidden="true">↗</span>
+            </span>
+          </button>
+
+          <button
+            class="hardware-card hardware-card-wide reveal"
+            type="button"
+            data-tilt
+            data-lightbox
+            data-full="./assets/hardware/flight-controller-back.jpg"
+            data-title="Flight Controller / Back"
+            data-caption="MicroSD · SPI/DMA Blackbox · Board-level I/O"
+          >
+            <span class="hardware-media">
+              <img
+                src="./assets/hardware/flight-controller-back.jpg"
+                alt="自研飞控板背面"
+                loading="lazy"
+              />
+            </span>
+            <span class="hardware-meta">
+              <span><small>CORE BOARD / BACK</small><strong>Flight Controller</strong></span>
+              <span class="hardware-arrow" aria-hidden="true">↗</span>
+            </span>
+          </button>
+
+          <button
+            class="hardware-card reveal"
+            type="button"
+            data-tilt
+            data-lightbox
+            data-full="./assets/hardware/gps-board.jpg"
+            data-title="GPS Receiver Board"
+            data-caption="UART · GGA/RMC · 10 Hz navigation input"
+          >
+            <span class="hardware-media">
+              <img src="./assets/hardware/gps-board.jpg" alt="GPS 子板" loading="lazy" />
+            </span>
+            <span class="hardware-meta">
+              <span><small>NAVIGATION</small><strong>GPS Board</strong></span>
+              <span class="hardware-arrow" aria-hidden="true">↗</span>
+            </span>
+          </button>
+
+          <button
+            class="hardware-card reveal"
+            type="button"
+            data-tilt
+            data-lightbox
+            data-full="./assets/hardware/magnetometer-board.jpg"
+            data-title="Magnetometer Daughterboard"
+            data-caption="QMC5883 · Remote mounting · Yaw observation"
+          >
+            <span class="hardware-media">
+              <img
+                src="./assets/hardware/magnetometer-board.jpg"
+                alt="磁力计子板"
+                loading="lazy"
+              />
+            </span>
+            <span class="hardware-meta">
+              <span><small>HEADING SENSOR</small><strong>Magnetometer</strong></span>
+              <span class="hardware-arrow" aria-hidden="true">↗</span>
+            </span>
+          </button>
+
+          <button
+            class="hardware-card reveal"
+            type="button"
+            data-tilt
+            data-lightbox
+            data-full="./assets/hardware/elrs-receiver.jpg"
+            data-title="ELRS Receiver"
+            data-caption="CRSF · Circular DMA · Link timeout and failsafe"
+          >
+            <span class="hardware-media">
+              <img
+                src="./assets/hardware/elrs-receiver.jpg"
+                alt="ELRS 接收机板"
+                loading="lazy"
+              />
+            </span>
+            <span class="hardware-meta">
+              <span><small>RC LINK</small><strong>ELRS Receiver</strong></span>
+              <span class="hardware-arrow" aria-hidden="true">↗</span>
+            </span>
+          </button>
+        </div>
+      </section>
+
+      <section class="repo-cta section reveal" aria-labelledby="repo-title">
+        <p class="section-index">CONTINUE THE REVIEW</p>
+        <h2 id="repo-title">实现细节留在 README 与源码中。</h2>
+        <p>
+          Architecture、RTOS task topology、State Estimation、Control Chain、Safety 与
+          Blackbox 等技术内容将在仓库 README 中按层级展开。
+        </p>
+        <a
+          class="button button-primary"
+          href="https://github.com/tephya/Alpha-Flight-2.X"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Open GitHub Repository <span aria-hidden="true">↗</span>
+        </a>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>Alpha2.0 Flight Control System</p>
+      <p>Independent hardware &amp; firmware project · 2026</p>
+    </footer>
+
+    <dialog class="lightbox" data-lightbox-dialog aria-label="Hardware 图片查看器">
+      <div class="lightbox-shell">
+        <header class="lightbox-header">
+          <div>
+            <small>HARDWARE DETAIL</small>
+            <h2 data-lightbox-title></h2>
+            <p data-lightbox-caption></p>
+          </div>
+          <button class="icon-button" type="button" data-lightbox-close aria-label="关闭图片">
+            ×
+          </button>
+        </header>
+
+        <div class="lightbox-stage" data-lightbox-stage>
+          <img data-lightbox-image alt="" draggable="false" />
+        </div>
+
+        <footer class="lightbox-footer">
+          <div class="lightbox-nav">
+            <button type="button" data-lightbox-prev>← Previous</button>
+            <span data-lightbox-counter></span>
+            <button type="button" data-lightbox-next>Next →</button>
+          </div>
+          <p>滚轮缩放 · 放大后拖动</p>
+        </footer>
+      </div>
+    </dialog>
+  </body>
+</html>

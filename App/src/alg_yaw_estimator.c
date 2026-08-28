@@ -96,9 +96,10 @@ static bool YawEstimator_FloatIsFinite(float value)
 }
 
 /*
- * 清除当前 Disarmed Mag Reacquire 候选序列。
+ * 清空 Disarmed 状态下用于重新接纳 Mag 的连续稳定样本跟踪状态。
+ * 下一个有效 Mag 样本将作为新候选序列的第一帧。
  */
-static void YawEstimator_ResetMagReacquire(void)
+static void YawEstimator_ResetMagReacquireTracker(void)
 {
     s_yaw.reacquire_last_yaw_rad = 0.0f;
     s_yaw.reacquire_last_field_gauss = 0.0f;
@@ -117,7 +118,7 @@ static bool YawEstimator_TryReacquireMag(float mag_yaw_rad,
 {
     if(!is_disarmed)
     {
-        YawEstimator_ResetMagReacquire();
+        YawEstimator_ResetMagReacquireTracker();
         return false;
     }
     
@@ -178,7 +179,7 @@ static bool YawEstimator_TryReacquireMag(float mag_yaw_rad,
 
     s_yaw.field_reference_gauss = field_norm_gauss;
 
-    YawEstimator_ResetMagReacquire();
+    YawEstimator_ResetMagReacquireTracker();
     return true;
 }
 
@@ -315,7 +316,7 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
         s_yaw.diag.mag_reject_reason = reject_reason;
 
         // 无效样本会中断“连续稳定”的 Reacquire 确认。
-        YawEstimator_ResetMagReacquire();
+        YawEstimator_ResetMagReacquireTracker();
         return false;
     }
 
@@ -348,7 +349,7 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
         s_yaw.diag.initialized = true;
         s_yaw.diag.mag_accepted = true;
 
-        YawEstimator_ResetMagReacquire();
+        YawEstimator_ResetMagReacquireTracker();
         return true;
     }
 
@@ -415,7 +416,7 @@ bool YawEstimator_CorrectMag(const MagData_t *mag,
     s_yaw.diag.mag_reject_reason = YAW_MAG_REJECT_NONE;
 
     // 正常融合恢复后，旧 Reacquire 候选序列不再有效。
-    YawEstimator_ResetMagReacquire();
+    YawEstimator_ResetMagReacquireTracker();
 
     /*
      * Disarmed 时认为外部磁干扰和机体动态较弱，
