@@ -1,24 +1,30 @@
-# Keil User/Build files
-*.o
-*.d
-*.crf
-*.lnp
-*.axf
-*.htm
-*.build_log.htm
-*.dep
-*.map
+# Keil MDK-ARM 编译输出目录
+MDK-ARM/**/Objects/
+MDK-ARM/**/Listings/
+MDK-ARM/*.axf
+MDK-ARM/*.hex
+MDK-ARM/*.map
+MDK-ARM/*.build_log.htm
+MDK-ARM/*.uvguix.*
+MDK-ARM/JLinkLog.txt
+MDK-ARM/*.dep
+
+# Keil 工程备份/临时文件
+*.bak
 *.uvoptx
 *.uvguix.*
 
-.vscode/*.log
-.vscode/*.log.lock
+# 编译生成的文件
+Objects
 
-# Folders
-Objects/
-Listings/
-DebugConfig/
-RTE/
+# VSCode 相关（如果这些是您本机路径专属，不想让协作者用您的绝对路径）
+# 注意：您的 c_cpp_properties.json 里是绝对路径，如果换电脑/换人会失效
+# 是否忽略 .vscode 需要您决定，见下方说明
+.vscode
 
-# Archives
-*.zip
+# Windows系统文件
+Thumbs.db
+desktop.ini
+
+# CubeMX 生成时的临时文件
+*.stmapp

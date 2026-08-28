@@ -1,0 +1,10 @@
+*** Using Compiler 'V5.06 update 7 (build 960)', folder: 'C:\Keil_v5\ARM\ARMCC\Bin'
+Build target 'CubeMX_Create'
+compiling app_power_monitor.c...
+linking...
+..\Objects\CubeMX_Create.sct(16): warning: L6314W: No section matches pattern *(DMA_UNSAFE_CCM).
+Program Size: Code=77676 RO-data=2392 RW-data=388 ZI-data=78180  
+Finished: 0 information, 1 warning and 0 error messages.
+FromELF: creating hex file...
+"..\Objects\CubeMX_Create.axf" - 0 Error(s), 1 Warning(s).
+Build Time Elapsed:  00:00:01
