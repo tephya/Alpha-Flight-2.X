@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://tephya.github.io/Alpha-Flight-2.X/"><strong>Project Website</strong></a>
+  <a href="https://tephya.github.io/Alpha-Flight-2.X/"><strong>项目演示网站</strong></a>
   · <a href="#system-architecture">Architecture</a>
   · <a href="#build">Build</a>
   · <a href="#known-limitations">Known Limitations</a>
